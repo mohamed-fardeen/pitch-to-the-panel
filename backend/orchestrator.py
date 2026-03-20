@@ -6,7 +6,8 @@ from prompts import (
     QUESTION_GENERATOR_PROMPT, 
     REACTION_GENERATOR_PROMPT, 
     INTERRUPT_CHECK_PROMPT, 
-    JUDGE_CONVERSATION_PROMPT
+    JUDGE_CONVERSATION_PROMPT,
+    DIFFICULTY_MODIFIERS
 )
 from services.llm import llm_provider
 # Feature 4: Firecrawl MCP Setup
@@ -165,8 +166,8 @@ async def get_scoring_radar(pitch: str, round1: dict, provider: str) -> dict:
     return {"scores": scores, "image": b64}
 
 # Helper to emit SSE events
-def sse_event(event_type: str, data: dict) -> str:
-    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+def sse_event(event_type: str, data: dict) -> dict:
+    return {"event": event_type, "data": json.dumps(data)}
 
 def build_conversation_context(session: dict) -> str:
     """Build a readable transcript of the conversation so far."""
@@ -188,14 +189,32 @@ def build_conversation_context(session: dict) -> str:
     
     return "\n".join(lines)
 
-async def generate_agent_question(session: dict, agent_id: str, provider: str):
+async def generate_agent_question(session: dict, agent_id: str, provider: str, difficulty: str = "standard"):
     """Stream one sharp question from the current agent."""
     agent = AGENTS_CONFIG[agent_id]
     conversation_context = build_conversation_context(session)
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["standard"])
     
-    system = QUESTION_GENERATOR_PROMPT.format(agent_name=agent["name"])
+    competitor_ctx = ""
+    if agent_id == "competitor":
+        yield sse_event("competitor_research_start", {"message": f"{agent['name']} is searching the web..."})
+        try:
+            competitor_ctx = await search_competitors(session["domain"]) + "\n\n"
+        except Exception:
+            pass
+        yield sse_event("competitor_research_done", {})
+        
+    memory_ctx = ""
+    if "pitcher_memory" in session:
+        mem = session["pitcher_memory"]
+        memory_ctx = f"PITCHER HISTORY:\nThis pitcher has pitched before ({mem.get('pitch_count')} times).\nPrevious pitch: {mem.get('last_pitch_summary')}\nWeakness last time: {mem.get('weaknesses')}\nIf relevant, acknowledge their progress.\n\n"
     
-    user_message = f"""PITCH SUMMARY:
+    system = QUESTION_GENERATOR_PROMPT.format(
+        agent_name=agent["name"],
+        difficulty_instruction=difficulty_instruction
+    )
+    
+    user_message = f"""{memory_ctx}{competitor_ctx}PITCH SUMMARY:
 {session['pitch_summary']}
 
 CONVERSATION SO FAR:
@@ -242,13 +261,15 @@ Find YOUR most important unanswered question."""
     
     session["waiting_for"] = "answer"
 
-async def generate_agent_reaction(session: dict, agent_id: str, question: str, answer: str, provider: str):
+async def generate_agent_reaction(session: dict, agent_id: str, question: str, answer: str, provider: str, difficulty: str = "standard"):
     """Stream agent's reaction after pitcher answers."""
     agent = AGENTS_CONFIG[agent_id]
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["standard"])
     system = REACTION_GENERATOR_PROMPT.format(
         agent_name=agent["name"],
         question=question,
-        answer=answer
+        answer=answer,
+        difficulty_instruction=difficulty_instruction
     )
     
     user_message = f"""Stay completely in character as {agent['name']}.
@@ -346,7 +367,7 @@ async def stream_interrupt(session: dict, interrupt_data: dict):
         "reason": interrupt_data.get("reason", "")
     })
 
-async def stream_full_conversation(session_id: str, session: dict, provider: str):
+async def stream_full_conversation(session_id: str, session: dict, provider: str, difficulty: str = "standard"):
     """Main hybrid conversation orchestrator."""
     yield sse_event("status", {
         "message": "Panel is ready. First question coming...",
@@ -360,7 +381,7 @@ async def stream_full_conversation(session_id: str, session: dict, provider: str
         session["current_agent_id"] = agent_id
         
         # STEP A: Agent asks question
-        async for event in generate_agent_question(session, agent_id, provider):
+        async for event in generate_agent_question(session, agent_id, provider, difficulty):
             yield event
         
         question = session["conversation"][-1]["content"]
@@ -395,7 +416,7 @@ async def stream_full_conversation(session_id: str, session: dict, provider: str
         yield sse_event("pitcher_answer_received", {"answer": answer, "agent_id": agent_id})
         
         # STEP C: Agent reacts
-        async for event in generate_agent_reaction(session, agent_id, question, answer, provider):
+        async for event in generate_agent_reaction(session, agent_id, question, answer, provider, difficulty):
             yield event
         
         reaction = session["conversation"][-1]["content"]
@@ -515,7 +536,7 @@ AGENTS_CONFIG = {
 }
 
 # The initial round 1 flow which now incorporates HITL
-async def run_round1(session_id: str, session: dict, pitch: str, provider: str, pitcher_id: str = None):
+async def run_round1(session_id: str, session: dict, pitch: str, provider: str, pitcher_id: str = None, difficulty: str = "standard"):
     # EXTRACT SUMMARY
     summary_prompt = "Summarize this startup pitch in 2-3 clear sentences focusing on the core problem, solution, and business model. Never use pleasantries."
     try:
@@ -574,8 +595,22 @@ async def run_round1(session_id: str, session: dict, pitch: str, provider: str, 
     session["active_panel"] = active_panel
     session["conversation"] = []
 
+    if pitcher_id:
+        memory = load_pitcher_memory(pitcher_id)
+        if memory:
+            session["pitcher_memory"] = memory
+            yield sse_event("returning_pitcher", {"memory": memory, "message": f"Welcome back. You pitched {memory.get('pitch_count')} times before."})
+
     yield sse_event("domain_classified", {**domain_data, "active_panel": active_panel})
     
     # Instead of running all agents at once, we move to the conversation orchestrator
-    async for event in stream_full_conversation(session_id, session, provider):
+    async for event in stream_full_conversation(session_id, session, provider, difficulty):
         yield event
+        
+    if pitcher_id:
+        save_pitcher_memory(pitcher_id, session, session.get("verdict_final") or session.get("verdict", ""))
+
+async def generate_fact_check(agent_claim: str, challenge: str, provider: str) -> str:
+    FACT_CHECK_PROMPT = "You are a neutral fact-checker. Respond in 2 sentences about this claim."
+    user_prompt = f"Agent claim: {agent_claim}\nPitcher challenge: {challenge}"
+    return await llm_provider.generate_response(FACT_CHECK_PROMPT, user_prompt, provider, stream=False)

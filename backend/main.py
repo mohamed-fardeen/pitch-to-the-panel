@@ -82,7 +82,7 @@ async def challenge_claim(req: ChallengeRequest):
     return {"fact_check_result": result}
 
 @app.get("/api/stream/main")
-async def main_stream(request: Request, session_id: str, pitch: str, provider: str = "anthropic", pitcher_id: str = None):
+async def main_stream(request: Request, session_id: str, pitch: str, provider: str = "anthropic", pitcher_id: str = None, difficulty: str = "standard"):
     """The core unified stream for v1 hybrid conversation."""
     if session_id not in sessions:
         sessions[session_id] = {
@@ -95,11 +95,12 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
             "conversation": [],
             "pending_answer": "",
             "waiting_for": None,
-            "phase": "setup"
+            "phase": "setup",
+            "difficulty": difficulty
         }
     
     async def event_generator():
-        async for event in run_round1(session_id, sessions[session_id], pitch, provider, pitcher_id):
+        async for event in run_round1(session_id, sessions[session_id], pitch, provider, pitcher_id, difficulty):
             if await request.is_disconnected():
                 break
             yield event
@@ -132,6 +133,21 @@ async def score_pitch(request: Request):
 @app.post("/api/pitch/generate-3d")
 async def meshy_3d(req: Sketch3DRequest):
     return await generate_3d_from_sketch(req.image_url)
+
+from pdf_export import generate_pdf_report
+from fastapi import Response
+
+@app.get("/api/session/{session_id}/report")
+async def download_report(session_id: str):
+    session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    pdf_bytes = await generate_pdf_report(session)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=pitch-report.pdf"}
+    )
 
 if __name__ == "__main__":
     import uvicorn

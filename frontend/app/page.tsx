@@ -23,6 +23,7 @@ export default function Home() {
   
   const [provider, setProvider] = useState<Provider>("anthropic");
   const [stage, setStage] = useState<"idle" | "pitching" | "hitl_summary" | "conversation" | "verdict">("idle");
+  const [showVerdictModal, setShowVerdictModal] = useState(false);
   const [panelState, setPanelState] = useState<PanelState>({});
   const [logs, setLogs] = useState<string[]>([]);
   
@@ -35,11 +36,13 @@ export default function Home() {
   const [hitlData, setHitlData] = useState<any>(null);
   const [sessionId, setSessionId] = useState("");
   const [pitcherId, setPitcherId] = useState("");
+  const [difficulty, setDifficulty] = useState("standard");
   const [radarChart, setRadarChart] = useState<string | null>(null);
   
   const [manualText, setManualText] = useState("");
   const [pushbackText, setPushbackText] = useState("");
   const [isPushbacking, setIsPushbacking] = useState(false);
+  const [factChecks, setFactChecks] = useState<Record<string, string>>({});
 
   const audioQueueRef = useRef<{role: AgentRole, text: string}[]>([]);
   const isPlayingRef = useRef(false);
@@ -88,6 +91,7 @@ export default function Home() {
     setSessionId(Math.random().toString(36).substring(2, 10));
     setConversation([]);
     setPanelState({});
+    setShowVerdictModal(false);
     addLog("Ready. Speak or type your pitch...");
   };
 
@@ -101,6 +105,7 @@ export default function Home() {
     url.searchParams.append("session_id", sessionId);
     url.searchParams.append("pitch", currentPitch);
     url.searchParams.append("provider", provider);
+    url.searchParams.append("difficulty", difficulty);
     if (pitcherId) url.searchParams.append("pitcher_id", pitcherId);
 
     const eventSource = new window.EventSource(url.toString());
@@ -185,6 +190,7 @@ export default function Home() {
     eventSource.addEventListener("verdict_complete", (e: any) => {
       const data = JSON.parse(e.data);
       setVerdictData(data.verdict);
+      setShowVerdictModal(true);
       setStage("verdict");
       enqueueSpeech("judge", data.verdict);
       
@@ -260,10 +266,27 @@ export default function Home() {
     eventSource.addEventListener("session_complete", (e: any) => {
         const data = JSON.parse(e.data);
         setVerdictData(data.verdict);
+        setShowVerdictModal(true);
         setIsPushbacking(false);
         eventSource.close();
         enqueueSpeech("judge", "I have considered your point. " + fullPushbackResponse);
     });
+  };
+
+  const handleChallenge = async (agentId: string, claim: string) => {
+    const reason = window.prompt("Why are you challenging this claim? Provide evidence or correction:");
+    if (!reason) return;
+    addLog(`Fact checking ${agentId}'s claim...`);
+    try {
+      const res = await fetch(`${API_BASE}/pitch/challenge`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, agent_id: agentId, agent_claim: claim, challenge_text: reason, provider })
+      });
+      const data = await res.json();
+      setFactChecks(prev => ({ ...prev, [agentId]: data.fact_check_result }));
+    } catch(e) {
+      addLog("Failed fact check.");
+    }
   };
 
   return (
@@ -296,7 +319,7 @@ export default function Home() {
              </div>
           </div>
 
-          <PanelGrid panelState={panelState} onChallenge={() => {}} factChecks={{}} />
+          <PanelGrid panelState={panelState} onChallenge={handleChallenge} factChecks={factChecks} />
           
           <div className="flex justify-center mt-4 pb-8">
             {stage === "idle" && (
@@ -310,13 +333,24 @@ export default function Home() {
             
             {stage === "pitching" && (
               <div className="text-center w-full max-w-md animate-in slide-in-from-bottom">
-                <input 
-                  type="text"
-                  value={pitcherId}
-                  onChange={(e) => setPitcherId(e.target.value)}
-                  placeholder="Your Name (Optional)"
-                  className="bg-gray-800 p-3 rounded-lg w-full text-sm text-amber-500 mb-4 border border-gray-700 outline-none"
-                />
+                <div className="flex gap-4 mb-4">
+                  <input 
+                    type="text"
+                    value={pitcherId}
+                    onChange={(e) => setPitcherId(e.target.value)}
+                    placeholder="Your Name (Optional)"
+                    className="bg-gray-800 p-3 rounded-lg w-1/2 text-sm text-amber-500 border border-gray-700 outline-none"
+                  />
+                  <select 
+                    value={difficulty}
+                    onChange={(e) => setDifficulty(e.target.value)}
+                    className="bg-gray-800 p-3 rounded-lg w-1/2 text-sm text-gray-300 border border-gray-700 outline-none"
+                  >
+                    <option value="gentle">Gentle Panel</option>
+                    <option value="standard">Standard Panel</option>
+                    <option value="brutal">Brutally Honest</option>
+                  </select>
+                </div>
                 <textarea 
                   value={manualText}
                   onChange={(e) => setManualText(e.target.value)}
@@ -384,7 +418,12 @@ export default function Home() {
 
       {verdictData && (
          <div className="w-full max-w-7xl flex flex-col gap-6 items-center mt-6">
-            <VerdictCard verdict={verdictData} />
+            {showVerdictModal && <VerdictCard verdict={verdictData} sessionId={sessionId} onClose={() => setShowVerdictModal(false)} />}
+            {!showVerdictModal && (
+              <div className="w-full max-w-2xl flex justify-end">
+                 <button onClick={() => setShowVerdictModal(true)} className="text-sm text-cyan-400 bg-gray-800 px-4 py-2 rounded shadow hover:bg-gray-700">View Verdict</button>
+              </div>
+            )}
             <div className="bg-gray-900 p-6 rounded-2xl border border-gray-800 shadow-xl w-full max-w-2xl">
               <h2 className="text-lg font-black text-rose-500 mb-2">Negotiate Verdict</h2>
               <textarea 
