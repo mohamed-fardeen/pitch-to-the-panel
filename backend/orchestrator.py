@@ -1,7 +1,13 @@
 import json
 import asyncio
 import os
-from prompts import AGENT_PROMPTS
+from prompts import (
+    AGENT_PROMPTS, 
+    QUESTION_GENERATOR_PROMPT, 
+    REACTION_GENERATOR_PROMPT, 
+    INTERRUPT_CHECK_PROMPT, 
+    JUDGE_CONVERSATION_PROMPT
+)
 from services.llm import llm_provider
 # Feature 4: Firecrawl MCP Setup
 try:
@@ -158,6 +164,357 @@ async def get_scoring_radar(pitch: str, round1: dict, provider: str) -> dict:
         
     return {"scores": scores, "image": b64}
 
+# Helper to emit SSE events
+def sse_event(event_type: str, data: dict) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+def build_conversation_context(session: dict) -> str:
+    """Build a readable transcript of the conversation so far."""
+    if not session.get("conversation"):
+        return "No exchanges yet."
+    
+    lines = []
+    for turn in session["conversation"]:
+        if turn["type"] == "question":
+            lines.append(f"{turn['agent_name']} asked: {turn['content']}")
+        elif turn["type"] == "answer":
+            lines.append(f"Pitcher answered: {turn['content']}")
+        elif turn["type"] == "reaction":
+            lines.append(f"{turn['agent_name']} reacted: {turn['content']}")
+        elif turn["type"] == "interrupt_q":
+            lines.append(f"{turn['agent_name']} jumped in: {turn['content']}")
+        elif turn["type"] == "interrupt_a":
+            lines.append(f"Pitcher replied: {turn['content']}")
+    
+    return "\n".join(lines)
+
+async def generate_agent_question(session: dict, agent_id: str, provider: str):
+    """Stream one sharp question from the current agent."""
+    agent = AGENTS_CONFIG[agent_id]
+    conversation_context = build_conversation_context(session)
+    
+    system = QUESTION_GENERATOR_PROMPT.format(agent_name=agent["name"])
+    
+    user_message = f"""PITCH SUMMARY:
+{session['pitch_summary']}
+
+CONVERSATION SO FAR:
+{conversation_context}
+
+Now ask your one sharp question as {agent['name']}.
+Remember: read what others asked. Don't repeat their angles.
+Find YOUR most important unanswered question."""
+
+    full_question = ""
+    yield sse_event("agent_question_start", {
+        "agent_id": agent_id,
+        "name": agent["name"],
+        "role": agent["role"],
+        "agent_index": session["current_agent_index"]
+    })
+    
+    try:
+        stream = await llm_provider.generate_response(system, user_message, provider, stream=True)
+        async for text in stream:
+            full_question += text
+            yield sse_event("agent_token", {
+                "agent_id": agent_id,
+                "token": text,
+                "type": "question"
+            })
+    except Exception as e:
+        full_question = f"Error generating question: {str(e)}"
+    
+    # Store in conversation log
+    session["conversation"].append({
+        "turn": len(session["conversation"]),
+        "type": "question",
+        "agent_id": agent_id,
+        "agent_name": agent["name"],
+        "content": full_question,
+        "timestamp": str(asyncio.get_event_loop().time())
+    })
+    
+    yield sse_event("agent_question_done", {
+        "agent_id": agent_id,
+        "question": full_question
+    })
+    
+    session["waiting_for"] = "answer"
+
+async def generate_agent_reaction(session: dict, agent_id: str, question: str, answer: str, provider: str):
+    """Stream agent's reaction after pitcher answers."""
+    agent = AGENTS_CONFIG[agent_id]
+    system = REACTION_GENERATOR_PROMPT.format(
+        agent_name=agent["name"],
+        question=question,
+        answer=answer
+    )
+    
+    user_message = f"""Stay completely in character as {agent['name']}.
+React honestly to what the pitcher just said.
+1-2 sentences only. No new question. Pure reaction."""
+
+    full_reaction = ""
+    yield sse_event("agent_reaction_start", {
+        "agent_id": agent_id,
+        "name": agent["name"]
+    })
+    
+    try:
+        stream = await llm_provider.generate_response(system, user_message, provider, stream=True)
+        async for text in stream:
+            full_reaction += text
+            yield sse_event("agent_token", {
+                "agent_id": agent_id,
+                "token": text,
+                "type": "reaction"
+            })
+    except Exception as e:
+        full_reaction = f"Error generating reaction: {str(e)}"
+    
+    # Store reaction in conversation log
+    session["conversation"].append({
+        "turn": len(session["conversation"]),
+        "type": "reaction",
+        "agent_id": agent_id,
+        "agent_name": agent["name"],
+        "content": full_reaction,
+        "timestamp": str(asyncio.get_event_loop().time())
+    })
+    
+    yield sse_event("agent_reaction_done", {
+        "agent_id": agent_id,
+        "reaction": full_reaction
+    })
+
+async def check_interrupt(session: dict, current_agent_id: str, question: str, answer: str, reaction: str, provider: str) -> dict | None:
+    """Check if another agent should interrupt."""
+    current_index = session["active_panel"].index(current_agent_id)
+    if current_index >= len(session["active_panel"]) - 1:
+        return None
+    
+    interrupt_count = sum(1 for t in session["conversation"] if t["type"] == "interrupt_q")
+    if interrupt_count >= 2:
+        return None
+    
+    conversation_so_far = build_conversation_context(session)
+    prompt = INTERRUPT_CHECK_PROMPT.format(
+        agent_name=AGENTS_CONFIG[current_agent_id]["name"],
+        question=question,
+        answer=answer,
+        reaction=reaction,
+        conversation_so_far=conversation_so_far
+    )
+    
+    try:
+        raw = await llm_provider.generate_response("You are a debate moderator. Output only valid JSON.", prompt, provider, stream=False)
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        result = json.loads(raw[start:end])
+        
+        if result.get("should_interrupt") and result.get("agent_id"):
+            agent_id = result["agent_id"]
+            if agent_id in session["active_panel"]:
+                interrupting_agent_index = session["active_panel"].index(agent_id)
+                if interrupting_agent_index > current_index:
+                    return result
+        return None
+    except Exception:
+        return None
+
+async def stream_interrupt(session: dict, interrupt_data: dict):
+    """Stream an interrupt question."""
+    agent_id = interrupt_data["agent_id"]
+    agent = AGENTS_CONFIG[agent_id]
+    followup = interrupt_data["followup_question"]
+    
+    session["conversation"].append({
+        "turn": len(session["conversation"]),
+        "type": "interrupt_q",
+        "agent_id": agent_id,
+        "agent_name": agent["name"],
+        "content": followup,
+        "timestamp": str(asyncio.get_event_loop().time())
+    })
+    
+    yield sse_event("interrupt_start", {
+        "agent_id": agent_id,
+        "name": agent["name"],
+        "role": agent["role"],
+        "question": followup,
+        "reason": interrupt_data.get("reason", "")
+    })
+
+async def stream_full_conversation(session_id: str, session: dict, provider: str):
+    """Main hybrid conversation orchestrator."""
+    yield sse_event("status", {
+        "message": "Panel is ready. First question coming...",
+        "phase": "conversation_start"
+    })
+    
+    active_panel = session["active_panel"]
+    
+    for agent_index, agent_id in enumerate(active_panel):
+        session["current_agent_index"] = agent_index
+        session["current_agent_id"] = agent_id
+        
+        # STEP A: Agent asks question
+        async for event in generate_agent_question(session, agent_id, provider):
+            yield event
+        
+        question = session["conversation"][-1]["content"]
+        
+        # STEP B: Wait for pitcher's answer
+        session["events"]["answer_event"].clear()
+        session["waiting_for"] = "answer"
+        
+        yield sse_event("waiting_for_answer", {
+            "agent_id": agent_id,
+            "agent_name": AGENTS_CONFIG[agent_id]["name"],
+            "question": question,
+            "agent_index": agent_index,
+            "total_agents": len(active_panel),
+            "session_id": session_id
+        })
+        
+        await session["events"]["answer_event"].wait()
+        answer = session["pending_answer"]
+        session["pending_answer"] = ""
+        session["waiting_for"] = None
+        
+        session["conversation"].append({
+            "turn": len(session["conversation"]),
+            "type": "answer",
+            "agent_id": "pitcher",
+            "agent_name": "Pitcher",
+            "content": answer,
+            "timestamp": str(asyncio.get_event_loop().time())
+        })
+        
+        yield sse_event("pitcher_answer_received", {"answer": answer, "agent_id": agent_id})
+        
+        # STEP C: Agent reacts
+        async for event in generate_agent_reaction(session, agent_id, question, answer, provider):
+            yield event
+        
+        reaction = session["conversation"][-1]["content"]
+        
+        # STEP D: Interrupt check
+        interrupt = await check_interrupt(session, agent_id, question, answer, reaction, provider)
+        if interrupt:
+            async for event in stream_interrupt(session, interrupt):
+                yield event
+            
+            int_q = interrupt["followup_question"]
+            int_id = interrupt["agent_id"]
+            
+            session["events"]["answer_event"].clear()
+            session["waiting_for"] = "interrupt_answer"
+            
+            yield sse_event("waiting_for_answer", {
+                "agent_id": int_id,
+                "agent_name": AGENTS_CONFIG[int_id]["name"],
+                "question": int_q,
+                "is_interrupt": True,
+                "session_id": session_id
+            })
+            
+            await session["events"]["answer_event"].wait()
+            int_a = session["pending_answer"]
+            session["pending_answer"] = ""
+            session["waiting_for"] = None
+            
+            session["conversation"].append({
+                "turn": len(session["conversation"]),
+                "type": "interrupt_a",
+                "agent_id": "pitcher",
+                "agent_name": "Pitcher",
+                "content": int_a,
+                "timestamp": str(asyncio.get_event_loop().time())
+            })
+            
+            yield sse_event("interrupt_answer_received", {"answer": int_a, "agent_id": int_id})
+        
+        await asyncio.sleep(0.4)
+    
+    # Complete
+    session["phase"] = "verdict"
+    yield sse_event("conversation_complete", {
+        "total_turns": len(session["conversation"]),
+        "session_id": session_id
+    })
+    
+    async for event in stream_verdict_from_conversation(session_id, session, provider):
+        yield event
+
+async def stream_verdict_from_conversation(session_id: str, session: dict, provider: str):
+    """Generate verdict from transcript."""
+    yield sse_event("status", {"message": "Judge is reading the conversation...", "phase": "verdict_start"})
+    await asyncio.sleep(0.8)
+    
+    transcript = build_conversation_context(session)
+    user_input = f"PITCH SUMMARY:\n{session['pitch_summary']}\n\nFULL CONVERSATION TRANSCRIPT:\n{transcript}"
+    
+    yield sse_event("agent_start", {"agent_id": "judge", "name": "The Judge", "role": "Verdict"})
+    
+    full_verdict = ""
+    try:
+        stream = await llm_provider.generate_response(JUDGE_CONVERSATION_PROMPT, user_input, provider, stream=True)
+        async for text in stream:
+            full_verdict += text
+            yield sse_event("agent_token", {"agent_id": "judge", "token": text})
+    except Exception as e:
+        full_verdict = f"Error: {str(e)}"
+    
+    session["verdict"] = full_verdict
+    
+    # Basic parsing for strengths/weakness/action
+    parts = {"strongest": "", "weakness": "", "fix": ""}
+    if "Your strongest point:" in full_verdict:
+        parts["strongest"] = full_verdict.split("Your strongest point:")[1].split("Your biggest weakness:")[0].strip()
+    if "Your biggest weakness:" in full_verdict:
+        parts["weakness"] = full_verdict.split("Your biggest weakness:")[1].split("Before your next pitch:")[0].strip()
+    if "Before your next pitch:" in full_verdict:
+        parts["fix"] = full_verdict.split("Before your next pitch:")[1].strip()
+    
+    session["verdict_parts"] = parts
+    yield sse_event("verdict_complete", {"verdict": full_verdict, "parts": parts, "session_id": session_id})
+    
+    yield sse_event("verdict_pushback_available", {"session_id": session_id, "message": "You can push back on one part."})
+
+async def handle_verdict_pushback(session_id: str, pushback: str, provider: str):
+    """Judge responds to pushback."""
+    session = sessions.get(session_id) # Note: sessions needs to be accessible, usually passed or global
+    if not session: return
+
+    prompt = f"Original Verdict:\n{session['verdict']}\n\nPushback:\n{pushback}\n\nRespond in 2 sentences."
+    yield sse_event("pushback_response_start", {"session_id": session_id})
+    
+    full_resp = ""
+    try:
+        stream = await llm_provider.generate_response("You are the Judge. Respond to pushback.", prompt, provider, stream=True)
+        async for text in stream:
+            full_resp += text
+            yield sse_event("agent_token", {"agent_id": "judge", "token": text, "type": "pushback_response"})
+    except Exception: pass
+    
+    session["verdict_final"] = session["verdict"] + "\n\nJudge Response: " + full_resp
+    yield sse_event("session_complete", {"session_id": session_id, "verdict": session["verdict_final"]})
+
+# Mapping for agent IDs to names/roles (since we deleted AGENTS config usage here)
+AGENTS_CONFIG = {
+    "vc": {"name": "Arjun Mehta", "role": "Venture Capitalist"},
+    "enthusiastic": {"name": "Priya Sharma", "role": "Product Manager"},
+    "hostile": {"name": "Ravi Kumar", "role": "Operations Manager"},
+    "expert": {"name": "Dr. Ananya Iyer", "role": "Industry Expert"},
+    "competitor": {"name": "Meera Pillai", "role": "Marketing Manager"},
+    "beginner": {"name": "Kiran", "role": "Student"},
+    "suresh": {"name": "Suresh Nair", "role": "Experienced Operator"},
+    "design_critic": {"name": "Aisha Thomas", "role": "Design Critic"}
+}
+
+# The initial round 1 flow which now incorporates HITL
 async def run_round1(session_id: str, session: dict, pitch: str, provider: str, pitcher_id: str = None):
     # EXTRACT SUMMARY
     summary_prompt = "Summarize this startup pitch in 2-3 clear sentences focusing on the core problem, solution, and business model. Never use pleasantries."
@@ -171,22 +528,16 @@ async def run_round1(session_id: str, session: dict, pitch: str, provider: str, 
     Read this pitch summary and classify it. Output ONLY valid JSON, no other text:
     
     {
-      "domain": "tech|food_beverage|retail|services|agriculture|education|healthcare|manufacturing|creative|social_impact|physical_product|other",
-      "sub_domain": "specific one-line description e.g. 'chai franchise' or 'handloom textiles'",
+      "domain": "tech|food_beverage|retail|services|agriculture|education|healthcare|manufacturing|creative|physical_product|other",
+      "sub_domain": "specific one-line description",
       "is_tech_primary": true,
       "is_physical_product": false,
       "business_model": "b2c|b2b|b2b2c|marketplace|franchise|subscription|other",
-      "target_customer": "one sentence describing the actual end customer",
-      "key_metrics": ["3 most important success metrics for THIS business type"],
-      "likely_competitors": ["2-3 real competitor names specific to this domain"],
+      "target_customer": "one sentence",
+      "key_metrics": ["3 metrics"],
+      "likely_competitors": ["2-3 competitors"],
       "panel_mode": "standard|design|physical_product|non_tech"
     }
-
-    panel_mode rules:
-    - standard: tech/software/app/SaaS pitches
-    - design: brand identity, UI/UX, graphic design, typography pitches  
-    - physical_product: any pitch for a physical manufactured item
-    - non_tech: food, retail, services, agriculture, hospitality, events
     """
     
     try:
@@ -195,227 +546,36 @@ async def run_round1(session_id: str, session: dict, pitch: str, provider: str, 
         end_idx = domain_json_str.rfind("}") + 1
         domain_data = json.loads(domain_json_str[start_idx:end_idx])
     except Exception:
-        domain_data = {
-            "sub_domain": "Tech Startup", "is_tech_primary": True, 
-            "business_model": "b2b", "target_customer": "general", 
-            "key_metrics": ["revenue"], "likely_competitors": [], 
-            "panel_mode": "standard"
-        }
+        domain_data = {"sub_domain": "General Tech", "is_tech_primary": True, "panel_mode": "standard"}
     
-    yield {
-        "event": "hitl_summary_approval",
-        "data": json.dumps({
-            "summary": summary,
-            "domain": domain_data,
-            "session_id": session_id,
-            "message": "Is this what you meant? Correct anything before the panel sees it."
-        })
-    }
+    yield sse_event("hitl_summary_approval", {
+        "summary": summary,
+        "domain": domain_data,
+        "session_id": session_id,
+        "message": "Is this what you meant?"
+    })
 
-    # WAIT FOR HUMAN IN THE LOOP APPROVAL
+    # Wait for approval
     await session["events"]["summary_approved"].wait()
 
-    # The user may have updated the pitch/summary in the HITL state
-    final_pitch = session["hitl_data"].get("corrected_summary")
-    if not final_pitch:
-        final_pitch = summary
-        
-    yield {
-        "event": "domain_classified",
-        "data": json.dumps(domain_data)
-    }
-
-    domain_context = f"""
-    DOMAIN CONTEXT — calibrate your response to this specific business type:
-    Business type: {domain_data.get('sub_domain')}
-    Is primarily tech: {domain_data.get('is_tech_primary')}  
-    Business model: {domain_data.get('business_model')}
-    Target customer: {domain_data.get('target_customer')}
-    Key success metrics: {', '.join(domain_data.get('key_metrics', []))}
-    
-    Evaluate as an expert in THIS type of business. Do NOT apply generic tech startup logic to a non-tech business.
-    """
-
-    session["summary"] = final_pitch
+    final_summary = session["hitl_data"].get("corrected_summary") or summary
+    session["pitch_summary"] = final_summary
     session["domain"] = domain_data
 
-    # Feature 5: Inject Memory
-    if pitcher_id:
-        memory = load_pitcher_memory(pitcher_id)
-        if memory:
-            yield { "event": "returning_pitcher", "data": json.dumps(memory) }
-            memory_context = f"PITCHER HISTORY:\nThis pitcher has used this platform before ({memory.get('pitch_count')} previous pitch(es)).\nPrevious pitch summary: {memory.get('last_pitch_summary')}\nWeakness identified last time: {memory.get('weaknesses')}\nIf relevant, acknowledge their progress.\n"
-            domain_context = f"{memory_context}\n\n{domain_context}"
-
-    # Feature 9: Operator Agent Panel Selection
+    # Panel Selection
     panel_mode = domain_data.get("panel_mode", "standard")
-    
     if panel_mode == "design":
         active_panel = PANEL_AGENTS_DESIGN
     elif panel_mode in ["non_tech", "physical_product"]:
         active_panel = PANEL_AGENTS_NON_TECH
     else:
         active_panel = PANEL_AGENTS_STANDARD
-        
+    
     session["active_panel"] = active_panel
+    session["conversation"] = []
 
-    session_round1 = {}
+    yield sse_event("domain_classified", {**domain_data, "active_panel": active_panel})
     
-    for agent_index, agent_key in enumerate(active_panel):
-        system_prompt = AGENT_PROMPTS.get(agent_key, "")
-        
-        # Design Mode Overrides for standard agent slots
-        if panel_mode == "design":
-            if agent_key == "expert":
-                system_prompt = AGENT_PROMPTS.get("dr_iyer_design", system_prompt)
-            elif agent_key == "competitor":
-                system_prompt = AGENT_PROMPTS.get("meera_design", system_prompt)
-        
-        previous_responses = ""
-        for prev_key in active_panel[:agent_index]:
-            if prev_key in session_round1:
-                previous_responses += f"[{prev_key.upper()}]: {session_round1[prev_key]}\n\n"
-        
-        cross_ref_instruction = ""
-        if agent_index > 0:
-            cross_ref_instruction = f"""
-            PREVIOUS PANEL RESPONSES (read these before responding):
-            {previous_responses}
-            
-            IMPORTANT: You MUST directly address at least one point made above.
-            Use their name: "The VC said X but..." or "Building on Priya's point..."
-            This is a live debate, not independent reports.
-            """
-            
-        user_prompt = f"{domain_context}\n\nHere is the startup pitch:\n\n{final_pitch}\n\n{cross_ref_instruction}"
-
-        if agent_key == "competitor":
-            yield {"event": "competitor_research_complete", "data": json.dumps({"status": "Meera is searching the web..."})}
-            competitor_data = await search_competitors(domain_data)
-            if competitor_data:
-                user_prompt = f"{competitor_data}\n\n{user_prompt}"
-
-        agent_full_text = ""
-        try:
-            stream = await llm_provider.generate_response(system_prompt, user_prompt, provider, stream=True)
-            async for chunk in stream:
-                agent_full_text += chunk
-                yield {
-                    "event": "message",
-                    "data": json.dumps({"agent": agent_key, "chunk": chunk, "state": "streaming"})
-                }
-            
-            session_round1[agent_key] = agent_full_text
-            yield {
-                "event": "message",
-                "data": json.dumps({"agent": agent_key, "chunk": "", "state": "done"})
-            }
-        except Exception as e:
-            session_round1[agent_key] = f"Error: {str(e)}"
-            yield {
-                "event": "error",
-                "data": json.dumps({"agent": agent_key, "error": str(e)})
-            }
-
-async def generate_question_selection(pitch: str, round1_responses: dict, provider: str) -> dict:
-    available_agents = list(round1_responses.keys())
-    agent_keys_str = ", ".join(available_agents)
-    
-    system_prompt = f"""You are an orchestrator agent. Your job is to read the startup pitch and all panel responses.
-Identify the single most pressing, difficult, or highest-stakes unresolved objection among the agents.
-Then, select the agent who is best suited to ask that question directly to the pitcher.
-
-Output JSON only, in this format:
-{{
-  "selected_agent": "agent_key",
-  "question": "The exact wording of the question to ask the pitcher"
-}}
-
-The available agent_keys are: {agent_keys_str}.
-Do not include any other text except the JSON."""
-
-    responses_text = "\n\n".join([f"[{k.upper()}]\n{v}" for k, v in round1_responses.items()])
-    user_prompt = f"PITCH:\n{pitch}\n\nAGENT RESPONSES:\n{responses_text}"
-    
-    try:
-        response = await llm_provider.generate_response(system_prompt, user_prompt, provider, stream=False)
-        if "```json" in response:
-            json_str = response.split("```json")[1].split("```")[0].strip()
-        else:
-            json_str = response.strip()
-        data = json.loads(json_str)
-        return data
-    except Exception as e:
-        return {
-            "selected_agent": "vc",
-            "question": "Can you explain how you plan to monetize this, specifically naming your first paying customer?"
-        }
-
-async def run_round2(pitch: str, answer: str, round1_responses: dict, provider: str):
-    active_panel = list(round1_responses.keys())
-    
-    async def generate_for_agent(agent_key: str):
-        system_prompt = AGENT_PROMPTS[agent_key]
-        round1 = round1_responses.get(agent_key, "")
-        user_prompt = f"Original Pitch: {pitch}\n\nYour previous response: {round1}\n\nPitcher's live answer to the panel's pressing question: {answer}\n\nRespond to their answer in 2-3 sentences max."
-        
-        try:
-            stream = await llm_provider.generate_response(system_prompt, user_prompt, provider, stream=True)
-            async for chunk in stream:
-                yield {
-                    "event": "message",
-                    "data": json.dumps({"agent": agent_key, "chunk": chunk, "state": "streaming"})
-                }
-            yield {
-                "event": "message",
-                "data": json.dumps({"agent": agent_key, "chunk": "", "state": "done"})
-            }
-        except Exception as e:
-            yield {
-                "event": "error",
-                "data": json.dumps({"agent": agent_key, "error": str(e)})
-            }
-
-    queue = asyncio.Queue()
-    async def consume_stream(agent_key):
-        async for item in generate_for_agent(agent_key):
-            await queue.put(item)
-    
-    tasks = [asyncio.create_task(consume_stream(agent)) for agent in active_panel]
-    
-    async def monitor_tasks():
-        await asyncio.gather(*tasks)
-        await queue.put(None)
-        
-    asyncio.create_task(monitor_tasks())
-    
-    while True:
-        item = await queue.get()
-        if item is None:
-            break
-        yield item
-
-async def generate_verdict(pitch: str, answer: str, round1: dict, round2: dict, provider: str) -> str:
-    system_prompt = AGENT_PROMPTS.get("judge", "You are the judge.")
-    
-    r1_text = "\n\n".join([f"[{k.upper()}]\n{v}" for k, v in round1.items()])
-    r2_text = "\n\n".join([f"[{k.upper()}]\n{v}" for k, v in round2.items()])
-    
-    user_prompt = f"PITCH:\n{pitch}\n\nROUND 1 RESPONSES:\n{r1_text}\n\nPITCHER'S LIVE ANSWER:\n{answer}\n\nROUND 2 RESPONSES:\n{r2_text}\n\nGenerate the final 3-part verdict."
-    
-    response = await llm_provider.generate_response(system_prompt, user_prompt, provider, stream=False)
-    return response
-
-async def generate_fact_check(agent_claim: str, challenge: str, provider: str) -> str:
-    FACT_CHECK_PROMPT = "You are a neutral fact-checker. Respond in 2 sentences about this claim."
-    user_prompt = f"Agent claim: {agent_claim}\nPitcher challenge: {challenge}"
-    return await llm_provider.generate_response(FACT_CHECK_PROMPT, user_prompt, provider, stream=False)
-
-async def generate_pushback_verdict(pitch: str, answer: str, round1: dict, round2: dict, pushback: str, provider: str) -> str:
-    system_prompt = AGENT_PROMPTS.get("judge", "You are the judge.")
-    
-    r1_text = "\n\n".join([f"[{k.upper()}]\n{v}" for k, v in round1.items()])
-    r2_text = "\n\n".join([f"[{k.upper()}]\n{v}" for k, v in round2.items()])
-    
-    user_prompt = f"PITCH:\n{pitch}\n\nROUND 1 RESPONSES:\n{r1_text}\n\nPITCHER'S LIVE ANSWER:\n{answer}\n\nROUND 2 RESPONSES:\n{r2_text}\n\nTHE PITCHER PUSHED BACK WITH:\n{pushback}\n\nGenerate an adjusted 3-part verdict."
-    return await llm_provider.generate_response(system_prompt, user_prompt, provider, stream=False)
+    # Instead of running all agents at once, we move to the conversation orchestrator
+    async for event in stream_full_conversation(session_id, session, provider):
+        yield event

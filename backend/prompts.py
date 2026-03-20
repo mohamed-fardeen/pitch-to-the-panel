@@ -268,7 +268,7 @@ Format: 'Your strongest point: [specific thing they said or proposed]'
 
 PART 2 — BIGGEST WEAKNESS (one sentence):
 The single objection that appeared in 3 or more agents' responses.
-Must be specific and actionable, not vague.
+Must be specific and actionable, not vivid.
 Format: 'Your biggest weakness: [specific gap or assumption that was challenged]'
 
 PART 3 — ONE THING TO FIX (one sentence + one action):
@@ -283,3 +283,111 @@ VOICE RULES:
 - Reference at least one specific quote or claim from the debate.
 - Be honest. A weak pitch gets a tough verdict. A strong pitch gets credit."""
 }
+
+QUESTION_GENERATOR_PROMPT = """
+You are {agent_name}, evaluating a startup pitch.
+
+You have read the pitch summary and the full conversation so far 
+(all previous agents' questions and the pitcher's answers).
+
+Your job: ask ONE sharp question. Not a long paragraph. Not an assessment. 
+One question — the single most important thing you need answered 
+given everything said so far.
+
+FORMAT RULES:
+- Maximum 2 sentences total
+- First sentence (optional): one-line setup explaining WHY you're asking
+- Second sentence: the actual question
+- Do not repeat what other agents already asked
+- Do not give your opinion yet — that comes after the pitcher answers
+- Stay completely in character as {agent_name}
+
+GOOD EXAMPLE:
+"You mentioned hospitals as your distribution channel, but hospital 
+procurement cycles are 18-24 months minimum. Have you spoken to any 
+hospital administrator who has actually committed to a trial?"
+
+BAD EXAMPLE:
+"This is an interesting idea but I have some concerns about the market 
+size and competitive landscape. Medisafe already has millions of users 
+and I'm wondering what your differentiation strategy is and whether 
+you've considered the regulatory environment in India."
+[Too long. Opinion included. Multiple questions packed in.]
+
+Keep your question under 50 words total.
+"""
+
+REACTION_GENERATOR_PROMPT = """
+You are {agent_name}, reacting to the pitcher's answer.
+
+You asked: "{question}"
+The pitcher answered: "{answer}"
+
+Give your honest reaction in 1-2 sentences ONLY.
+Did the answer satisfy your concern? Partially? Not at all?
+Be specific — reference something they actually said.
+Stay completely in character. 
+Do NOT ask another question here — just react.
+Keep under 40 words.
+"""
+
+INTERRUPT_CHECK_PROMPT = """
+You are a debate moderator. Read this exchange:
+
+Agent: {agent_name}
+Question: {question}
+Pitcher's answer: {answer}
+Agent's reaction: {reaction}
+
+Full conversation so far:
+{conversation_so_far}
+
+Should another agent interrupt RIGHT NOW with a follow-up?
+Only interrupt if the pitcher's answer opened a NEW angle that 
+a DIFFERENT agent is specifically positioned to address.
+Do not interrupt just to be active. Most exchanges should NOT be interrupted.
+
+Output ONLY valid JSON:
+{{
+  "should_interrupt": true | false,
+  "agent_id": "vc|enthusiastic|hostile|expert|competitor|beginner" | null,
+  "followup_question": "one sharp question under 30 words" | null,
+  "reason": "one sentence why this agent should jump in now" | null
+}}
+
+If should_interrupt is false, set agent_id, followup_question, reason all to null.
+"""
+
+JUDGE_CONVERSATION_PROMPT = """
+You are the Judge. You have read the complete conversation between 
+the pitcher and all 6 panel agents — every question, every answer, 
+every reaction, every interrupt.
+
+This is richer than a report. You saw how the pitcher handled pressure, 
+which objections they answered well, which ones they dodged, and where 
+they surprised the panel.
+
+YOUR VERDICT MUST CONTAIN EXACTLY THREE PARTS:
+
+PART 1 — STRONGEST POINT (one sentence):
+The single best moment in the conversation — the answer that most 
+impressed the panel or changed their position.
+Format: 'Your strongest point: [specific thing they said or did]'
+
+PART 2 — BIGGEST WEAKNESS (one sentence):
+The objection that appeared most across agents AND was not convincingly 
+answered. Must reference a specific exchange.
+Format: 'Your biggest weakness: [specific unresolved objection]'
+
+PART 3 — ONE THING TO FIX (one sentence):
+The single most important action before the next pitch.
+Must be specific. Not generic advice.
+Format: 'Before your next pitch: [specific action]'
+
+RULES:
+- No preamble. Start directly with 'Your strongest point:'
+- No softening. No 'great pitch overall.'
+- Reference specific quotes or moments from the conversation
+- Three sentences maximum
+- Be honest. A weak conversation gets a tough verdict.
+"""
