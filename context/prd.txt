@@ -1,0 +1,277 @@
+
+PITCH TO THE PANEL
+AI-Powered Live Startup Pitch Platform
+Product Requirements Document  •  v1.0  •  March 2026
+
+4 weeks
+Build Time
+Claude API + Next.js
+Core Stack
+90 seconds
+Demo Time
+6 specialist + 1 judge
+Agents
+
+1. Product Overview
+Pitch to the Panel is an interactive AI-powered platform where anyone — a student, a founder, a visitor at an expo — can pitch their startup idea out loud and receive real-time reactions from a panel of 6 distinct AI personas: a skeptical VC, two potential users (one enthusiastic, one hostile), a domain expert, a competitor&apos;s customer, and a first-time confused user.
+
+Unlike static AI feedback tools, the panel debates among itself, disagrees openly, asks the pitcher a hard question mid-session, and responds to the pitcher&apos;s live answer. Every pitch produces a different outcome because every idea and every pitcher is different.
+
+The core thesis
+Most AI tools tell you what the AI thinks. This one tells you what your users think — and shows you the receipts: disagreements, objections, surprises, and a verdict you can act on.
+
+2. Problem Statement
+Who this is for
+Primary user
+Students and early-stage founders who have an idea but no money or time for real user research
+Secondary user
+Hackathon participants, accelerator applicants, product managers validating a feature
+Expo context
+Any visitor who walks up to the booth — they become the user instantly by pitching anything
+
+What is broken today
+Real user research costs ₹30,000–₹4,00,000 and takes 2–4 weeks — inaccessible to students and early founders
+Asking ChatGPT for feedback gives you one voice with no disagreement, no surprise, and no pushback
+Friends and family give biased, encouraging feedback that does not reflect real market reaction
+Accelerator applications are rejected for reasons founders never understood because nobody told them honestly
+
+The gap in one sentence
+There is no tool that gives a first-time founder a realistic, multi-perspective, adversarial reaction to their idea in under 2 minutes — for free, right now, at any stage of the idea.
+
+3. Product Vision &amp; Demo Flow
+The 90-second expo demo
+This is the exact sequence a visitor experiences at the booth. Every second is designed.
+
+0:00 – 0:10
+Visitor approaches. Screen shows: &apos;Pitch your idea. 60 seconds. Go.&apos;
+0:10 – 1:10
+Visitor pitches out loud. System transcribes in real time. Panel avatars are visible but silent.
+1:10 – 1:20
+Pitcher presses &apos;Done.&apos; Panel activates. 6 avatar cards light up one by one.
+1:20 – 1:50
+Round 1 reactions stream live — each agent responds in character. Sentiment meters animate.
+1:50 – 2:00
+The hardest objection surfaces as a full-screen interrupt: one agent asks the pitcher a direct question.
+2:00 – 2:20
+Pitcher answers out loud. System captures answer. Panel reacts to the answer — some agents change sentiment.
+2:20 – 2:30
+Judge agent delivers 3-line verdict: strongest point, biggest weakness, one thing to fix.
+2:30
+Verdict card appears. Visitor screenshots it. Next person steps up.
+
+The self-referential demo trick
+At any point during the expo, run the demo on the product itself: pitch &apos;An AI platform where you pitch your startup idea and get a live panel reaction.&apos; Watch the VC say &apos;I’ve seen this before&apos; and the enthusiastic user say &apos;I would pay for this right now.&apos; Judges love the meta-moment.
+
+4. The Panel — Agent Design
+Six agents plus one judge. Each has a fixed identity, a fixed set of priorities, and a fixed communication style. They are not random — they are calibrated to cover the full spectrum of real reactions any idea receives.
+
+Agent
+Role
+What they notice
+Signature moment
+Skeptical VC
+Arjun Mehta, Partner at a Tier-2 fund
+Market size, defensibility, why now, exit potential
+Asks the hardest question: &apos;Who are your first 10 paying customers?&apos;
+Enthusiastic User
+Priya Sharma, 24, product manager
+Whether it solves a real daily pain she has
+Says &apos;I would use this today&apos; and explains exactly why
+Hostile User
+Ravi Kumar, 38, skeptical traditionalist
+Why the current way works fine and AI is unnecessary
+Points out the thing the pitcher assumed everyone would accept
+Domain Expert
+Dr. Ananya Iyer, relevant field specialist
+Technical accuracy, existing solutions, real barriers
+Catches the flaw the pitcher didn&apos;t know was a flaw
+Competitor Customer
+Meera Pillai, already using a rival product
+Whether this is meaningfully better than what she has now
+Says &apos;my current tool already does X&apos; — tests true differentiation
+First-Time User
+Kiran, 19, student, low tech literacy
+Whether the concept is understandable without explanation
+Says &apos;I don’t understand what this does&apos; — tests clarity of the pitch
+Judge (Synthesis)
+Neutral arbiter — no identity
+Conflicts, consensus, actionable verdict
+Delivers the 3-line verdict after reading all 6 reactions
+
+How agents stay in character
+Each agent has a system prompt with four fixed sections:
+Identity — name, age, job, income, tech comfort, existing tools they use
+Priorities — the 3 things they always evaluate first, in order
+Voice — how they speak (formal/casual, long/short, optimistic/cynical)
+Red lines — things they will always object to regardless of the pitch
+
+Critical design rule
+Agents must disagree. If all 6 react positively, the demo is unconvincing. The system prompt for each agent explicitly includes a &apos;devil’s advocate trigger&apos; — a condition under which they push back even on ideas they like. Disagreement between agents is the signal that the simulation is working.
+
+5. Interaction Design
+The live question moment — the most important UX decision
+After Round 1 reactions, the system identifies the single most important unresolved objection across all 6 agents. The most skeptical agent is chosen to ask it directly to the pitcher. The screen transitions to a full-width interrupt:
+
+Example interrupt
+Arjun Mehta (Skeptical VC) wants to ask you something:
+
+&apos;You said this saves people 2 hours a week. What evidence do you have that people actually spend 2 hours on this problem today? Have you talked to anyone who has this pain?&apos;
+
+The pitcher answers out loud. The system transcribes and feeds the answer back to all 6 agents. Each agent updates their sentiment based on the answer. This is the moment where a good live answer can visibly change the room — sentiment meters shift, the hostile user softens, the VC leans in.
+
+The UI — three zones
+Zone 1 — Panel Grid
+6 avatar cards in a 3x2 grid. Each shows: illustrated avatar, name, role, sentiment meter (hostile / skeptical / neutral / interested / excited). Animates as reactions stream in.
+Zone 2 — Live Feed
+Real-time transcript of each agent’s reaction, streaming word by word. Color coded by agent. Visible to the pitcher and the crowd.
+Zone 3 — Room Temperature
+A single large meter showing overall panel sentiment in real time. Starts at neutral. Rises when agents connect with something. Drops when an objection lands. This is the most watchable element for the crowd.
+
+Verdict card — the takeaway
+The final output is a shareable card the pitcher can screenshot. It contains:
+Your strongest point — the thing that landed best across the panel
+Your biggest weakness — the objection that appeared in 3 or more agents
+One thing to fix — a specific, actionable recommendation from the Judge agent
+Panel breakdown — a small icon row showing each agent&apos;s final sentiment
+
+6. Technical Architecture
+Stack overview
+Frontend
+Next.js 14 + Tailwind CSS + Framer Motion for avatar animations
+Backend
+Python + FastAPI — stateless session handler
+LLM
+Claude Sonnet 4.6 via Anthropic API — all 6 agents + judge
+Streaming
+Server-Sent Events (SSE) — agent responses stream word by word
+Speech-to-text
+Web Speech API (browser-native, no API cost) for pitch transcription
+State
+In-memory session store — no database needed for expo demo
+Hosting
+Render or Railway free tier — deploy in one command
+
+Agent orchestration flow
+Step 1 — Intake
+Pitch transcript arrives. System extracts: core problem, target user, proposed solution, claimed benefit, business model (if any).
+Step 2 — Round 1
+All 6 agents receive the extracted pitch summary + their system prompt. Responses generated in parallel. Each streams to the UI as it arrives.
+Step 3 — Question selection
+Judge agent reads all 6 Round 1 responses. Identifies the single highest-stakes unresolved objection. Selects the most appropriate agent to ask it.
+Step 4 — Pitcher response
+Live answer transcribed. Fed back to all 6 agents as an additional context block.
+Step 5 — Round 2
+All 6 agents respond to the pitcher’s answer. Sentiment updates. Shorter responses — one or two sentences each.
+Step 6 — Verdict
+Judge synthesizes Round 1 + pitcher answer + Round 2 into the 3-line verdict. Verdict card generated.
+
+Why Claude Sonnet specifically
+Sonnet 4.6 is the right model here for three reasons: (1) it maintains persona consistency across a multi-turn agent debate without drift, (2) it generates the kind of sharp, opinionated, human-sounding reactions that make the panel feel real rather than polite, and (3) the cost per demo session is under ₹3 at current API pricing — negligible for an expo.
+
+7. Agent System Prompt Structure
+Each agent prompt follows the same 4-section template. Below is the complete template and the filled version for the Skeptical VC as a reference.
+
+Prompt template
+Section 1 — IDENTITY
+You are [NAME], [AGE], [JOB TITLE]. You have [N] years of experience in [DOMAIN]. You currently use [EXISTING TOOLS]. Your income is [BRACKET]. Your tech comfort level is [LOW/MEDIUM/HIGH].
+
+Section 2 — PRIORITIES
+When evaluating any startup idea, you always ask these 3 questions first, in this order:
+1. [PRIORITY 1]
+2. [PRIORITY 2]
+3. [PRIORITY 3]
+You do not move to the next question until you have an answer to the previous one.
+
+Section 3 — VOICE
+You speak [FORMALLY/CASUALLY]. Your responses are [SHORT/MEDIUM/LONG]. You are [OPTIMISTIC/SKEPTICAL/NEUTRAL]. You never say &apos;that’s a great idea&apos; — you always qualify. You use specific examples from your own experience.
+
+Section 4 — RED LINES
+You will always push back on the following regardless of the idea:
+- [RED LINE 1]
+- [RED LINE 2]
+- [RED LINE 3]
+These are non-negotiable objections that come from your personal experience.
+
+Filled example — Skeptical VC (Arjun Mehta)
+Arjun Mehta — full system prompt
+IDENTITY: You are Arjun Mehta, 41, Partner at a Series A fund based in Bengaluru. You have 12 years in venture capital. You have seen 400+ pitches. You are not easily impressed.
+
+PRIORITIES:
+1. Market size — is this a vitamin or a painkiller? Is the market &gt;$1B?
+2. Defensibility — what stops a well-funded competitor from copying this in 6 months?
+3. Traction — has anyone actually paid for this, or is this still theory?
+
+VOICE: Direct, slightly impatient. Medium-length responses. You ask one sharp question at the end of every response. You do not soften criticism.
+
+RED LINES: You always push back on: (1) &apos;We have no competition&apos; — you always name a competitor they missed. (2) Vague TAM claims like &apos;the market is huge&apos; — you demand a number. (3) AI as a feature, not a product — &apos;adding AI to X&apos; is not a business model.
+
+8. 4-Week Build Plan
+Week
+Theme
+Deliverables
+Done when...
+Week 1
+Core agent loop
+6 agent system prompts finalized. Pitch intake + extraction logic. All 6 agents responding in terminal. Judge verdict generating. Test with 5 different pitch types.
+Full debate completes end-to-end in terminal with coherent, distinct agent voices.
+Week 2
+Question mechanism + streaming
+Identify highest-stakes objection logic. Pitcher response feed-back loop. SSE streaming from FastAPI to frontend. Basic Next.js UI showing agent cards.
+Live question surfaces correctly. Pitcher answer visibly changes at least 2 agent sentiments.
+Week 3
+Full UI + animations
+Avatar card grid with sentiment meters. Room Temperature meter animating live. Verdict card with shareable layout. Web Speech API integration for voice input.
+Full demo runs end-to-end in browser with streaming, animations, and voice input.
+Week 4
+Polish + demo tuning
+Pre-test 10 different pitch types. Tune agent prompts for disagreement quality. Rehearse 90-second demo script. Deploy to Render. Prepare judge Q&amp;A answers.
+Demo runs flawlessly 10 times in a row with different pitches. Ready for expo.
+
+9. Pre-Built Demo Scenarios
+These 4 scenarios should be tested and tuned before the expo. Each reliably produces a different emotional arc so you can match the demo to the audience.
+
+Scenario 1 — The Relatable App
+&apos;An app that reminds elderly parents to take their medication and alerts their children if they miss a dose.&apos; Produces: enthusiastic user loves it, VC asks about hospital partnerships, domain expert flags existing solutions, hostile user says his parents would never use a smartphone app.
+Scenario 2 — The Crowded Space
+&apos;An AI writing tool that helps students write better essays.&apos; Produces: instant competitor objection from Meera (competitor customer), VC asks why not just use ChatGPT, domain expert raises academic integrity concerns. Tests how the pitcher defends differentiation.
+Scenario 3 — The Contrarian Winner
+&apos;A platform that connects retired professionals with startups for 2-hour paid consultations.&apos; Produces: VC is genuinely interested (large market, clear monetization), hostile user becomes the most supportive agent, first-time user is confused. Demonstrates that good ideas produce real enthusiasm.
+Scenario 4 — The Pitcher’s Own Idea
+The visitor pitches their real startup or class project idea. This is the most powerful scenario because the emotional stakes are real. The verdict card becomes a genuine deliverable they take away.
+
+10. Risks &amp; Mitigations
+Risk 1 — Same-voice syndrome
+All agents sound like the same polite AI with different names. Mitigation: Each agent prompt includes an explicit &apos;voice fingerprint&apos; — specific sentence patterns, filler phrases, and formatting rules that are unique to that agent. Arjun uses em-dashes and ends every response with a question. Ravi uses short sentences and says &apos;look&apos; before objections.
+Risk 2 — Generic verdicts
+Judge outputs boilerplate like &apos;great idea, consider your market size.&apos; Mitigation: Judge prompt is constrained to reference specific quotes from the panel debate. Verdict must include at least one direct quote from an agent and one specific number or fact from the pitch.
+Risk 3 — Pitch too vague to process
+Visitor says something like &apos;an app for students.&apos; Mitigation: Intake extraction agent asks one clarifying question before activating the panel: &apos;What specific problem does this solve, and who has this problem right now?&apos; Forces enough specificity to run the debate.
+Risk 4 — API latency during live demo
+Panel takes 30+ seconds to respond and the crowd loses interest. Mitigation: Stream immediately. First words of the first agent appear within 2 seconds. Agents run sequentially but stream simultaneously so the screen is always moving. Use loading animations for agents whose turn hasn&apos;t come yet.
+Risk 5 — Judge question about AI bias
+Expo judge asks &apos;aren’t these just AI opinions, not real user opinions?&apos; Mitigation: Prepared answer: &apos;These are not random opinions — each agent is calibrated to a specific real-world archetype with a fixed set of priorities and objections. They are not more biased than a real VC or a real hostile user. They are less biased than your friends.&apos;
+
+11. Success Metrics for the Expo
+Booth dwell time
+Average visitor stays 3+ minutes (vs 30 seconds for a slide-based demo)
+Queue formation
+At least 3 people waiting to pitch at any given time during peak hours
+Verdict screenshots
+Visitors photograph their verdict card — proof the output felt personal and worth keeping
+Judge engagement
+Expo judges ask follow-up technical questions (not just &apos;interesting&apos;) — signals genuine depth
+Self-referential demo
+Run the meta-demo at least once with a judge present — the moment lands every time
+
+12. Research Foundation
+This project is grounded in two peer-reviewed research threads, giving it academic credibility alongside practical demo value.
+
+Primary paper
+Synthetic User Simulation — applications to startup market validation (2025). Establishes that AI-generated synthetic users can reliably surface market objections and edge cases that founders miss. Direct theoretical basis for the panel design.
+Supporting paper
+REDEREF: Probabilistic Routing in Multi-Agent LLMs (Hosseini et al., Feb 2026). Thompson sampling for routing tasks to the most appropriate agent, with reflection and retry. Informs the question-selection mechanism — which agent asks the hardest question is a routing decision, not a random assignment.
+Design framework
+Design Patterns for Regulatory Transparency in AI Agents (Chan et al., Dec 2025). The &apos;Visible thoughts&apos; and &apos;Inspectable agent memory&apos; patterns inform the live feed design — visitors can see exactly why each agent reacted the way they did.
+
+One sentence for the expo poster
+&apos;Pitch your startup idea to a panel of 6 AI personas — a skeptical VC, two potential users, a domain expert, a competitor’s customer, and a confused first-timer — and get a real verdict in 90 seconds.&apos;

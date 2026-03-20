@@ -1,0 +1,143 @@
+import os
+from typing import AsyncGenerator
+import google.generativeai as genai
+from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class LLMProvider:
+    def __init__(self):
+        self.anthropic_client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY")) if os.getenv("ANTHROPIC_API_KEY") else None
+        
+        gemini_api_key = os.getenv("GEMINI_API_KEY")
+        if gemini_api_key:
+            genai.configure(api_key=gemini_api_key)
+            self.gemini_model = "configured"
+        else:
+            self.gemini_model = None
+
+        self.openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")) if os.getenv("OPENAI_API_KEY") else None
+        
+        self.groq_client = AsyncOpenAI(api_key=os.getenv("GROQ_API_KEY"), base_url="https://api.groq.com/openai/v1") if os.getenv("GROQ_API_KEY") else None
+
+    async def generate_response(self, system_prompt: str, user_prompt: str, provider: str = "anthropic", stream: bool = False) -> str | AsyncGenerator[str, None]:
+        try:
+            return await self._generate_response_internal(system_prompt, user_prompt, provider, stream)
+        except Exception as e:
+            print(f"Provider {provider} failed: {e}. Falling back to Gemini.")
+            if provider != "gemini" and self.gemini_model:
+                try:
+                    return await self._generate_response_internal(system_prompt, user_prompt, "gemini", stream)
+                except Exception as fallback_e:
+                    print(f"Fallback to Gemini also failed: {fallback_e}")
+                    raise fallback_e
+            else:
+                raise e
+
+    async def _generate_response_internal(self, system_prompt: str, user_prompt: str, provider: str = "anthropic", stream: bool = False) -> str | AsyncGenerator[str, None]:
+        if provider == "anthropic":
+            if not self.anthropic_client:
+                raise ValueError("Anthropic API key not configured")
+            
+            if stream:
+                return self._stream_anthropic(system_prompt, user_prompt)
+            else:
+                response = await self.anthropic_client.messages.create(
+                    model="claude-3-5-sonnet-latest",
+                    max_tokens=1024,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}]
+                )
+                return response.content[0].text
+
+        elif provider == "gemini":
+            if not self.gemini_model:
+                raise ValueError("Gemini API key not configured")
+            
+            model = genai.GenerativeModel('gemini-1.5-pro', system_instruction=system_prompt)
+            if stream:
+                return self._stream_gemini(model, user_prompt)
+            else:
+                response = await model.generate_content_async(user_prompt)
+                return response.text
+
+        elif provider == "openai":
+            if not self.openai_client:
+                raise ValueError("OpenAI API key not configured")
+            
+            if stream:
+                return self._stream_openai(system_prompt, user_prompt)
+            else:
+                response = await self.openai_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                )
+                return response.choices[0].message.content
+
+        elif provider == "groq":
+            if not self.groq_client:
+                raise ValueError("Groq API key not configured")
+            
+            if stream:
+                return self._stream_groq(system_prompt, user_prompt)
+            else:
+                response = await self.groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                )
+                return response.choices[0].message.content
+        else:
+            raise ValueError(f"Unknown provider: {provider}")
+
+    async def _stream_anthropic(self, system_prompt: str, user_prompt: str) -> AsyncGenerator[str, None]:
+        stream = await self.anthropic_client.messages.create(
+            model="claude-3-5-sonnet-latest",
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+            stream=True
+        )
+        async for event in stream:
+            if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                yield event.delta.text
+
+    async def _stream_gemini(self, model, user_prompt: str) -> AsyncGenerator[str, None]:
+        response = await model.generate_content_async(user_prompt, stream=True)
+        async for chunk in response:
+            yield chunk.text
+
+    async def _stream_openai(self, system_prompt: str, user_prompt: str) -> AsyncGenerator[str, None]:
+        stream = await self.openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            stream=True
+        )
+        async for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
+
+    async def _stream_groq(self, system_prompt: str, user_prompt: str) -> AsyncGenerator[str, None]:
+        stream = await self.groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            stream=True
+        )
+        async for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
+
+llm_provider = LLMProvider()

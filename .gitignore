@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Next.js
+.next/
+out/
+build/
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# IDE / System
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Antigravity / AI
+.gemini/
+.agents/
+.agent/
+_agents/
+_agent/
+tmp/
+
+# App Specific
+backend/db/pitch_memory.db
+frontend/public/charts/
