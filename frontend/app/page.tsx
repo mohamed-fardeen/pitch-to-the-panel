@@ -44,8 +44,24 @@ export default function Home() {
   const [isPushbacking, setIsPushbacking] = useState(false);
   const [factChecks, setFactChecks] = useState<Record<string, string>>({});
 
+  const [coachHints, setCoachHints] = useState<string | null>(null);
+  const [coachLoading, setCoachLoading] = useState(false);
+  const [weakAnswerDetected, setWeakAnswerDetected] = useState(false);
+  const [currentAgentId, setCurrentAgentId] = useState("");
+  const [retrying, setRetrying] = useState(false);
+  const [retryCounts, setRetryCounts] = useState<Record<string, number>>({});
+  const [retryStatus, setRetryStatus] = useState<string | null>(null);
+  
+  const [challengingAgentId, setChallengingAgentId] = useState<string | null>(null);
+  const [challengingAgentClaim, setChallengingAgentClaim] = useState<string | null>(null);
+  const [isRebutting, setIsRebutting] = useState(false);
+  const [needsSkipApproval, setNeedsSkipApproval] = useState(false);
+  const needsSkipApprovalRef = useRef(false);
+
   const audioQueueRef = useRef<{role: AgentRole, text: string}[]>([]);
   const isPlayingRef = useRef(false);
+  const challengingAgentIdRef = useRef<string | null>(null);
+  const flowLockRef = useRef(false);
 
   const playNextInQueue = () => {
     if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
@@ -64,6 +80,12 @@ export default function Home() {
   const enqueueSpeech = (role: string, text: string) => {
     audioQueueRef.current.push({ role: role as AgentRole, text });
     playNextInQueue();
+  };
+
+  const cancelAllSpeech = () => {
+    stopSpeaking();
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
   };
 
   const addLog = (msg: string) => setLogs((prev) => [...prev, msg]);
@@ -91,6 +113,7 @@ export default function Home() {
     setSessionId(Math.random().toString(36).substring(2, 10));
     setConversation([]);
     setPanelState({});
+    setRetryCounts({});
     setShowVerdictModal(false);
     addLog("Ready. Speak or type your pitch...");
   };
@@ -132,9 +155,21 @@ export default function Home() {
 
     eventSource.addEventListener("agent_question_start", (e: any) => {
       const data = JSON.parse(e.data);
-      setStage("conversation");
-      updateAgentState(data.agent_id, "", "streaming");
-      addLog(`${data.name} is asking a question...`);
+      const checkAndStart = () => {
+        if (window.speechSynthesis.speaking || challengingAgentIdRef.current || needsSkipApprovalRef.current || flowLockRef.current) {
+            setTimeout(checkAndStart, 500);
+        } else {
+            setStage("conversation");
+            setCurrentAgentId(data.agent_id);
+            updateAgentState(data.agent_id, "", "streaming");
+            addLog(`${data.name} is asking a question...`);
+            
+            // Auto-scroll to the new agent
+            const agentEl = document.getElementById(`agent-${data.agent_id}`);
+            if (agentEl) agentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      };
+      checkAndStart();
     });
 
     eventSource.addEventListener("agent_token", (e: any) => {
@@ -145,18 +180,45 @@ export default function Home() {
     eventSource.addEventListener("agent_question_done", (e: any) => {
       const data = JSON.parse(e.data);
       updateAgentState(data.agent_id, "", "done");
-      // Split by --- to only read the NEW question if it was appended
       enqueueSpeech(data.agent_id, data.question);
+      
+      // LOCK Flow Instantly to prevent next agent from starting
+      flowLockRef.current = true;
+      
+      const checkAndSetSkip = () => {
+        if (window.speechSynthesis.speaking || audioQueueRef.current.length > 0) {
+            setTimeout(checkAndSetSkip, 500);
+        } else {
+           setNeedsSkipApproval(true);
+           needsSkipApprovalRef.current = true;
+           setChallengingAgentId(data.agent_id);
+           setChallengingAgentClaim(data.question);
+        }
+      };
+      checkAndSetSkip();
     });
+
+    const triggerWaitingForAnswer = (data: any) => {
+      setWaitingForAnswer(true);
+      setCurrentQuestion(data.question);
+      setCurrentAgentId(data.agent_id);
+      setManualText("");
+      setCoachHints(null);
+      setWeakAnswerDetected(false);
+      addLog(`Waiting for your answer to ${data.agent_name}...`);
+    };
 
     eventSource.addEventListener("waiting_for_answer", (e: any) => {
       const data = JSON.parse(e.data);
-      setTimeout(() => {
-        setWaitingForAnswer(true);
-        setCurrentQuestion(data.question);
-        setManualText("");
-        addLog(`Waiting for your answer to ${data.agent_name}...`);
-      }, 1000);
+      // Wait for speech to finish before asking for input
+      const checkAndTrigger = () => {
+        if (window.speechSynthesis.speaking || challengingAgentIdRef.current) {
+          setTimeout(checkAndTrigger, 500);
+        } else {
+          triggerWaitingForAnswer(data);
+        }
+      };
+      checkAndTrigger();
     });
 
     eventSource.addEventListener("pitcher_answer_received", (e: any) => {
@@ -167,20 +229,60 @@ export default function Home() {
 
     eventSource.addEventListener("agent_reaction_start", (e: any) => {
       const data = JSON.parse(e.data);
-      updateAgentState(data.agent_id, "\n\nReaction: ", "streaming");
+      const checkAndReact = () => {
+        if (window.speechSynthesis.speaking || challengingAgentIdRef.current || needsSkipApprovalRef.current || flowLockRef.current) {
+          setTimeout(checkAndReact, 500);
+        } else {
+          updateAgentState(data.agent_id, "\n\nReaction: ", "streaming");
+        }
+      };
+      checkAndReact();
     });
 
     eventSource.addEventListener("agent_reaction_done", (e: any) => {
       const data = JSON.parse(e.data);
+      
+      // If this is a placeholder for a turn handled via Challenge Mode, just move on
+      if (data.reaction === "[Interaction Complete]") {
+          flowLockRef.current = false;
+          setNeedsSkipApproval(false);
+          needsSkipApprovalRef.current = false;
+          return;
+      }
+
       updateAgentState(data.agent_id, "", "done");
       enqueueSpeech(data.agent_id, data.reaction);
+      
+      // LOCK Flow Instantly to prevent next agent from starting
+      flowLockRef.current = true;
+      
+      const checkAndSetSkip = () => {
+        if (window.speechSynthesis.speaking || audioQueueRef.current.length > 0) {
+            // Wait for reaction speech to finish
+            setTimeout(checkAndSetSkip, 500);
+        } else {
+           setNeedsSkipApproval(true);
+           needsSkipApprovalRef.current = true;
+           setChallengingAgentId(data.agent_id);
+           setChallengingAgentClaim(data.reaction);
+           // flowLock remains true until user chooses Skip or Challenge
+        }
+      };
+      checkAndSetSkip();
     });
 
     eventSource.addEventListener("interrupt_start", (e: any) => {
       const data = JSON.parse(e.data);
-      updateAgentState(data.agent_id, `\n\n[INTERRUPT]: ${data.question}`, "done");
-      enqueueSpeech(data.agent_id, data.question);
-      addLog(`${data.name} jumped in!`);
+      const checkAndInterrupt = () => {
+        if (window.speechSynthesis.speaking || challengingAgentIdRef.current) {
+          setTimeout(checkAndInterrupt, 500);
+        } else {
+          updateAgentState(data.agent_id, `\n\n[INTERRUPT]: ${data.question}`, "done");
+          enqueueSpeech(data.agent_id, data.question);
+          addLog(`${data.name} jumped in!`);
+        }
+      };
+      checkAndInterrupt();
     });
 
     eventSource.addEventListener("conversation_complete", (e: any) => {
@@ -226,10 +328,144 @@ export default function Home() {
     }
   };
 
+  const handleRetry = async () => {
+    if (!sessionId || !currentAgentId) return;
+    
+    const currentCount = retryCounts[currentAgentId] || 0;
+    if (currentCount >= 2) return;
+
+    setRetrying(true);
+    setCoachHints(null);
+    setWeakAnswerDetected(false);
+
+    try {
+      const res = await fetch(`${API_BASE}/conversation/retry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          agent_id: currentAgentId
+        })
+      });
+
+      if (res.ok) {
+        setManualText('');
+        setRetryCounts(prev => ({
+          ...prev,
+          [currentAgentId]: currentCount + 1
+        }));
+
+        setPanelState(prev => {
+          const existing = prev[currentAgentId];
+          if (!existing) return prev;
+          const parts = existing.text.split("\n\nReaction: ");
+          return {
+            ...prev,
+            [currentAgentId]: {
+              ...existing,
+              text: parts[0],
+              status: "done"
+            }
+          };
+        });
+
+        setWaitingForAnswer(true);
+        setRetryStatus("Answer cleared — give it another go");
+        setTimeout(() => setRetryStatus(null), 2000);
+      }
+    } catch (err) {
+      console.error('Retry failed:', err);
+      addLog("Retry failed.");
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const isWeakAnswer = (text: string) => {
+    if (text.trim().split(' ').length < 8) return true;
+    const weakPhrases = [
+      "i don't know",
+      "not sure",
+      "haven't thought",
+      "no idea",
+      "i'm not sure",
+      "don't know",
+      "good question",
+      "maybe",
+      "i think so",
+      "probably"
+    ];
+    const lower = text.toLowerCase();
+    return weakPhrases.some(phrase => lower.includes(phrase));
+  };
+
+  const getCoachHints = async () => {
+    setCoachLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/conversation/coach`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          agent_id: currentAgentId,
+          question: currentQuestion
+        })
+      });
+      const data = await res.json();
+      setCoachHints(data.coach_hints);
+    } catch (e) {
+      addLog("Failed to get coaching hints.");
+    }
+    setCoachLoading(false);
+  };
+
+  const submitRebuttal = async () => {
+    if (!manualText || !challengingAgentId || !challengingAgentClaim) return;
+    const text = manualText;
+    setIsRebutting(true);
+    setManualText("");
+    addLog(`Sending rebuttal to ${challengingAgentId}...`);
+    try {
+      const res = await fetch(`${API_BASE}/conversation/rebuttal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+           session_id: sessionId,
+           agent_id: challengingAgentId,
+           agent_claim: challengingAgentClaim,
+           rebuttal_text: text,
+           provider
+        })
+      });
+      const data = await res.json();
+      updateAgentState(challengingAgentId, `\n\n💬 Rebuttal: ${data.agent_response}`, "done");
+      setChallengingAgentClaim(data.agent_response); // Show the latest reply in the box
+      enqueueSpeech(challengingAgentId, data.agent_response);
+    } catch(e) {
+      addLog("Failed to send rebuttal.");
+    } finally {
+      setIsRebutting(false);
+    }
+  };
+
   const submitAnswer = async () => {
     if (!manualText) return;
+
+    if (challengingAgentId) {
+      submitRebuttal();
+      return;
+    }
+
+    if (isWeakAnswer(manualText) && !weakAnswerDetected) {
+      setWeakAnswerDetected(true);
+      await getCoachHints();
+      return;
+    }
+
     const ans = manualText;
     setWaitingForAnswer(false);
+    setCoachHints(null);
+    setWeakAnswerDetected(false);
     try {
       await fetch(`${API_BASE}/conversation/answer`, {
         method: "POST",
@@ -273,20 +509,61 @@ export default function Home() {
     });
   };
 
-  const handleChallenge = async (agentId: string, claim: string) => {
-    const reason = window.prompt("Why are you challenging this claim? Provide evidence or correction:");
-    if (!reason) return;
-    addLog(`Fact checking ${agentId}'s claim...`);
+  const submitSkip = async () => {
     try {
-      const res = await fetch(`${API_BASE}/pitch/challenge`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, agent_id: agentId, agent_claim: claim, challenge_text: reason, provider })
+      await fetch(`${API_BASE}/conversation/skip`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId })
       });
-      const data = await res.json();
-      setFactChecks(prev => ({ ...prev, [agentId]: data.fact_check_result }));
     } catch(e) {
-      addLog("Failed fact check.");
+      console.error("Skip error:", e);
     }
+  };
+
+  const handleChallengeAction = () => {
+    setNeedsSkipApproval(false);
+    needsSkipApprovalRef.current = false;
+    submitSkip(); // Release backend from waiting for a full answer
+    // Keep flowLockRef.current = true to pause main stream while in sub-convo
+    challengingAgentIdRef.current = challengingAgentId;
+    setManualText("");
+    addLog(`Challenge accepted. Speak your rebuttal to ${challengingAgentId}...`);
+  };
+
+  const handleSkip = () => {
+    setNeedsSkipApproval(false);
+    needsSkipApprovalRef.current = false;
+    cancelAllSpeech(); // Deeply cancel speech and queue
+    submitSkip(); // Release backend from waiting
+    flowLockRef.current = false; // RELEASE LOCK to allow next agent
+    setChallengingAgentId(null);
+    challengingAgentIdRef.current = null;
+    setChallengingAgentClaim(null);
+    setManualText("");
+    addLog("Interaction skipped. Panel continuing...");
+  };
+
+  const handleChallenge = (agentId: string, claim: string) => {
+    // This is for legacy/from code if needed
+    setChallengingAgentId(agentId);
+    challengingAgentIdRef.current = agentId;
+    setChallengingAgentClaim(claim);
+    setManualText("");
+    addLog(`Challenging ${agentId}'s claim. Speak your rebuttal...`);
+  };
+
+  const endChallengeMode = () => {
+    setChallengingAgentId(null);
+    challengingAgentIdRef.current = null;
+    setNeedsSkipApproval(false);
+    needsSkipApprovalRef.current = false;
+    cancelAllSpeech(); // Deeply cancel speech and queue
+    submitSkip(); 
+    flowLockRef.current = false; // RELEASE LOCK to allow next agent
+    setChallengingAgentClaim(null);
+    setManualText("");
+    addLog("Interaction ended. Panel continuing...");
   };
 
   return (
@@ -319,7 +596,12 @@ export default function Home() {
              </div>
           </div>
 
-          <PanelGrid panelState={panelState} onChallenge={handleChallenge} factChecks={factChecks} />
+          <PanelGrid 
+            panelState={panelState} 
+            onChallenge={handleChallenge} 
+            factChecks={factChecks} 
+            challengingAgentId={challengingAgentId}
+          />
           
           <div className="flex justify-center mt-4 pb-8">
             {stage === "idle" && (
@@ -382,26 +664,99 @@ export default function Home() {
                </div>
             )}
 
-            {waitingForAnswer && (
-              <div className="bg-gray-900 p-8 rounded-2xl border border-cyan-500/50 max-w-2xl w-full shadow-2xl animate-in fade-in zoom-in-95">
-                 <h3 className="text-cyan-400 font-bold mb-4 uppercase text-xs tracking-widest">Question for you:</h3>
-                 <p className="text-xl text-white font-semibold mb-6 italic">"{currentQuestion}"</p>
-                 <textarea 
-                    value={manualText}
-                    onChange={(e) => setManualText(e.target.value)}
-                    className="w-full bg-gray-800 p-4 rounded-xl text-white text-sm mb-4 border border-gray-700 outline-none h-24"
-                    placeholder="Type or speak your answer..."
-                 />
-                 <div className="flex gap-4">
-                    <button onClick={isRecording ? stopRecording : startRecording} className="bg-gray-700 text-white px-6 py-2 rounded-full font-bold">
-                       {isRecording ? "Stop" : "Mic"}
-                    </button>
-                    <button onClick={submitAnswer} className="flex-1 bg-cyan-600 text-white px-8 py-2 rounded-full font-bold">
-                       Submit Answer
-                    </button>
-                 </div>
+            {needsSkipApproval && !challengingAgentId && (
+              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-in fade-in">
+                  <div className="bg-gray-900 border border-gray-700/50 p-8 rounded-3xl max-w-lg w-full shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex flex-col items-center text-center">
+                      <div className="w-16 h-16 bg-amber-500/20 rounded-full flex items-center justify-center mb-6">
+                        <span className="text-3xl font-bold text-amber-500">?</span>
+                      </div>
+                      <h3 className="text-2xl font-black text-white mb-2">Interact or Skip?</h3>
+                      <p className="text-gray-400 text-sm mb-8 leading-relaxed">
+                        The panelist has finished speaking. Would you like to interact (mic/coach), or skip to the next turn?
+                      </p>
+                      
+                      <div className="w-full flex gap-4">
+                        <button 
+                          onClick={handleSkip}
+                          className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 py-4 rounded-2xl font-bold border border-gray-700 transition-all text-sm"
+                        >
+                          Skip →
+                        </button>
+                        <button 
+                          onClick={handleChallengeAction}
+                          className="flex-1 bg-rose-600 hover:bg-rose-500 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-rose-600/20 text-sm"
+                        >
+                          🗨 Interact
+                        </button>
+                      </div>
+                  </div>
               </div>
             )}
+
+            {challengingAgentId && (
+              <div className="bg-rose-900/30 border border-rose-500/50 p-6 rounded-2xl max-w-2xl w-full shadow-2xl animate-in fade-in slide-in-from-top-4 mb-4">
+                  <div className="flex justify-between items-center mb-4">
+                     <h3 className="text-rose-400 font-bold uppercase text-xs tracking-widest flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                        Interactive Challenge Mode: {challengingAgentId}
+                     </h3>
+                     <button onClick={endChallengeMode} className="text-gray-400 hover:text-white text-[10px] uppercase font-bold border border-gray-700 px-3 py-1 rounded-full transition-all">
+                        End Challenge
+                     </button>
+                  </div>
+                  <p className="text-lg text-white font-medium mb-6 italic border-l-2 border-rose-500 pl-4 py-1">
+                    "{challengingAgentClaim}"
+                  </p>
+                  
+                  <textarea 
+                     value={manualText}
+                     onChange={(e) => setManualText(e.target.value)}
+                     className="w-full bg-gray-800/50 p-4 rounded-xl text-white text-sm mb-4 border border-rose-500/20 outline-none h-24 focus:border-rose-500/50 transition-all shadow-inner"
+                     placeholder="Speak your rebuttal into the mic..."
+                  />
+
+                  <div className="flex gap-4">
+                     <button 
+                       disabled={isRebutting}
+                       onClick={isRecording ? stopRecording : startRecording} 
+                       className="bg-gray-700 text-white px-6 py-2 rounded-full font-bold disabled:opacity-50 shadow-lg"
+                     >
+                        {isRecording ? "Stop" : "Mic"}
+                     </button>
+                     
+                     <button 
+                       onClick={getCoachHints} 
+                       disabled={coachLoading}
+                       className="bg-gray-800 text-amber-400 px-6 py-2 rounded-full font-bold border border-gray-700 hover:bg-gray-700 transition-colors disabled:opacity-50"
+                     >
+                        {coachLoading ? "..." : "💡 Help"}
+                     </button>
+
+                     <div className="flex-grow"></div>
+                     <button 
+                       onClick={submitRebuttal} 
+                       disabled={isRebutting || !manualText}
+                       className="bg-rose-600 text-white px-8 py-2 rounded-full font-bold hover:bg-rose-500 transition-colors disabled:opacity-50 shadow-[0_0_15px_rgba(225,29,72,0.4)]"
+                     >
+                        {isRebutting ? "..." : "Reply →"}
+                     </button>
+                  </div>
+
+                  {coachHints && (
+                    <div className="mt-4 p-4 bg-gray-900/80 rounded-xl text-gray-300 text-sm border border-amber-500/30 animate-in fade-in zoom-in-95">
+                      <p className="font-bold text-amber-400 mb-2 flex items-center gap-2 uppercase tracking-tighter text-[10px]">
+                        💡 Coach's Review
+                      </p>
+                      <ul className="space-y-1 list-disc list-inside italic opacity-80 leading-relaxed">
+                        {coachHints.split('\n').filter(l => l.trim().length > 5).map((hint, i) => (
+                          <li key={i}>{hint.replace(/^-?\s*Think about:\s*/i, '').trim()}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+              </div>
+            )}
+
           </div>
         </div>
 

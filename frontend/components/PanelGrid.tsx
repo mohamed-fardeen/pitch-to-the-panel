@@ -13,6 +13,7 @@ interface PanelGridProps {
   panelState: PanelState;
   onChallenge?: (agentId: string, claim: string) => void;
   factChecks?: Record<string, string>;
+  challengingAgentId?: string | null;
 }
 
 const ALL_AGENTS = {
@@ -26,7 +27,7 @@ const ALL_AGENTS = {
   design_critic: { id: "design_critic", name: "Aisha Thomas", role: "Design Critic", color: "bg-pink-500" }
 };
 
-export function PanelGrid({ panelState, onChallenge, factChecks }: PanelGridProps) {
+export function PanelGrid({ panelState, onChallenge, factChecks, challengingAgentId }: PanelGridProps) {
   const activeKeys = Object.keys(panelState).length > 0 
     ? Object.keys(panelState) 
     : ["vc", "enthusiastic", "hostile", "expert", "competitor", "beginner"];
@@ -36,15 +37,16 @@ export function PanelGrid({ panelState, onChallenge, factChecks }: PanelGridProp
       {activeKeys.map((key) => {
         const agent = ALL_AGENTS[key as keyof typeof ALL_AGENTS] || { id: key, name: key, role: "Panelist", color: "bg-gray-500" };
         const state = panelState[key] || { text: "", status: "idle" };
+        const isChallenged = challengingAgentId === key;
         
         return (
-           <div key={key} className="bg-gray-900 border border-gray-700/50 rounded-2xl overflow-hidden shadow-2xl flex flex-col transition-all duration-300 hover:border-gray-600/50">
-              <div className="flex items-center space-x-3 p-4 bg-gradient-to-r from-gray-800 to-gray-800/50 border-b border-gray-700/50">
+           <div key={key} id={`agent-${key}`} className={`bg-gray-900 border ${isChallenged ? 'border-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.3)] scale-[1.02]' : 'border-gray-700/50'} rounded-2xl overflow-hidden shadow-2xl flex flex-col transition-all duration-300 hover:border-gray-600/50`}>
+              <div className={`flex items-center space-x-3 p-4 ${isChallenged ? 'bg-gradient-to-r from-rose-900/40 to-gray-800' : 'bg-gradient-to-r from-gray-800 to-gray-800/50'} border-b ${isChallenged ? 'border-rose-500/50' : 'border-gray-700/50'}`}>
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold ${agent.color} text-white shadow-lg`}>
                   {agent.name.charAt(0)}
                 </div>
                 <div>
-                  <h3 className="font-semibold text-gray-100">{agent.name}</h3>
+                  <h3 className={`font-semibold ${isChallenged ? 'text-rose-100' : 'text-gray-100'}`}>{agent.name}</h3>
                   <p className="text-xs text-gray-400">{agent.role}</p>
                 </div>
                 <div className="ml-auto">
@@ -72,16 +74,6 @@ export function PanelGrid({ panelState, onChallenge, factChecks }: PanelGridProp
                   )}
               </div>
               
-              {state.status === "done" && onChallenge && (
-                  <div className="px-5 pb-4 mt-auto">
-                     <button 
-                       onClick={() => onChallenge(key, state.text)}
-                       className="w-full py-2 bg-gray-800/50 hover:bg-rose-900/40 text-gray-400 hover:text-rose-400 border border-gray-700 hover:border-rose-800/50 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
-                     >
-                       Challenge Claim
-                     </button>
-                  </div>
-              )}
            </div>
         );
       })}

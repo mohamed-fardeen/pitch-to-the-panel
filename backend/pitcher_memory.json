@@ -1,0 +1,77 @@
+{
+  "Adil": {
+    "last_pitch_summary": "Routabit Expeditions addresses the lack of safe and personalized travel options for adventure seekers and nature enthusiasts. The startup offers curated adventure and cultural expeditions to offbeat locations, leveraging technology and local networks to create immersive experiences. Its business model revolves around providing these unique travel experiences to individuals and corporate groups, likely generating revenue through expedition bookings and customized travel packages.",
+    "domain": {
+      "domain": "services",
+      "sub_domain": "Adventure travel and cultural expeditions",
+      "is_tech_primary": true,
+      "is_physical_product": false,
+      "business_model": "b2c|b2b",
+      "target_customer": "Adventure seekers and nature enthusiasts, as well as corporate groups",
+      "key_metrics": [
+        "Expedition bookings",
+        "Customer satisfaction ratings",
+        "Revenue growth"
+      ],
+      "likely_competitors": [
+        "Intrepid Travel",
+        "National Geographic Expeditions",
+        "Butterfield & Robinson"
+      ],
+      "panel_mode": "standard"
+    },
+    "weaknesses": "Check Verdict for Weaknesses",
+    "verdict": "Your strongest point: The pitcher's answer to Kiran's question, where they revealed that 40-50% of every expedition cost goes directly towards community development and local partner incentives, showcasing a clear commitment to empowering local communities and providing a detailed breakdown of the allocation.\nYour biggest weakness: The objection that appeared most across agents, specifically regarding maintaining curation and expertise while scaling operations, was not convincingly answered, as seen in Dr. Ananya Iyer's reaction, where she stated that the answer only partly alleviated her concern.\nBefore your next pitch: Clarify and provide more detailed information on how Routabit Expeditions plans to maintain the high level of curation and local expertise as the company scales its operations, addressing the concerns of Dr. Ananya Iyer and other agents.",
+    "pitch_count": 1
+  },
+  "GPT": {
+    "last_pitch_summary": "The core problem is that traditional resumes and online profiles often fail to accurately demonstrate an individual's skills, making it difficult for recruiters to find qualified candidates. The solution is an AI-powered platform that generates personalized projects to test users' skills, evaluates their work, and creates a verified portfolio, or \"skill passport\". The business model is based on freemium subscriptions for users and SaaS tools for recruiters, offering a more effective way to match candidates with job openings.",
+    "domain": {
+      "domain": "tech",
+      "sub_domain": "AI-powered recruitment platform",
+      "is_tech_primary": true,
+      "is_physical_product": false,
+      "business_model": "b2b2c|subscription",
+      "target_customer": "Recruiters and job candidates",
+      "key_metrics": [
+        "user engagement",
+        "conversion rates",
+        "customer retention"
+      ],
+      "likely_competitors": [
+        "LinkedIn",
+        "Indeed",
+        "Glassdoor"
+      ],
+      "panel_mode": "standard"
+    },
+    "weaknesses": "Check Verdict for Weaknesses",
+    "verdict": "Your strongest point: The pitcher's ability to address scalability concerns by suggesting alternative user acquisition strategies, such as integrating with learning platforms and making skill profiles shareable, showed a deep understanding of the platform's potential for growth.\nYour biggest weakness: The objection that the platform's AI-powered evaluation algorithms may not be entirely bias-free, as raised by Dr. Ananya Iyer, was not convincingly answered, with the pitcher acknowledging that \"there's no such thing as perfectly bias-free AI\" but not providing a concrete solution to fully alleviate this concern.\nBefore your next pitch: Develop a more detailed plan for addressing and mitigating bias in the evaluation algorithms, including specific examples of how the \"continuous improvement loop\" would work in practice to detect and correct biases, to better address the concerns of investors like Dr. Ananya Iyer.",
+    "pitch_count": 1
+  },
+  "gpt 2": {
+    "last_pitch_summary": "The core problem is that online learning platforms fail to provide credible proof of skills, making it difficult for job applicants to demonstrate their abilities to recruiters. The proposed solution is a platform that offers real-world project-based assessments to learners, evaluating their work and generating a portfolio that serves as tangible proof of their skills. The business model likely involves offering these assessment and portfolio services to individuals, possibly with a subscription or course-completion based fee, to help them increase their hireability.",
+    "domain": {
+      "domain": "education",
+      "sub_domain": "online learning and skill assessment platform",
+      "is_tech_primary": true,
+      "is_physical_product": false,
+      "business_model": "b2c|subscription",
+      "target_customer": "Individuals seeking to improve their hireability and demonstrate skills to recruiters",
+      "key_metrics": [
+        "user engagement",
+        "completion rates",
+        "job placement rates"
+      ],
+      "likely_competitors": [
+        "LinkedIn Learning",
+        "Udemy",
+        "Coursera"
+      ],
+      "panel_mode": "standard"
+    },
+    "weaknesses": "Check Verdict for Weaknesses",
+    "verdict": "Your strongest point: When answering Kiran's question, the pitcher effectively addressed the concern about pricing by explaining the freemium model, offering a free version with basic features, and providing a clear outline of what the paid version would entail, which helped to alleviate Kiran's budget concerns.\nYour biggest weakness: The objection that appeared most across agents and was not convincingly answered was the lack of concrete projections and planning, as seen in the exchange with Arjun Mehta, where the pitcher admitted to not having \"fully modeled it out properly yet\" and struggled to provide specific numbers for user acquisition.\nBefore your next pitch: Develop a detailed, data-driven projection for user acquisition and growth over the first three years, including specific numbers and milestones, to address the concerns about scalability and return on investment raised by Arjun Mehta and others.",
+    "pitch_count": 1
+  }
+}

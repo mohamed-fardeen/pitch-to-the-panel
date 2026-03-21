@@ -135,6 +135,8 @@ export function useAgentVoice() {
     return chunks;
   };
 
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
   const speak = (role: AgentRole, text: string, onEnd?: () => void) => {
     if (!isSupported || !text) {
       if (onEnd) onEnd();
@@ -151,11 +153,13 @@ export function useAgentVoice() {
 
     console.log(`[Voice] ${role}: Speaking ${chunks.length} chunks...`);
     cancelledRef.current = false;
+    setIsSpeaking(true);
     const voice = getBestVoice(role);
     let chunkIndex = 0;
 
     const speakNextChunk = () => {
       if (cancelledRef.current || chunkIndex >= chunks.length) {
+        setIsSpeaking(false);
         if (onEnd) onEnd();
         return;
       }
@@ -196,8 +200,9 @@ export function useAgentVoice() {
     if (isSupported) {
       cancelledRef.current = true;
       window.speechSynthesis.cancel();
+      setIsSpeaking(false);
     }
   };
 
-  return { speak, stopSpeaking, isSupported };
+  return { speak, stopSpeaking, isSpeaking, isSupported };
 }

@@ -2,12 +2,12 @@ import json
 import asyncio
 import os
 from prompts import (
-    AGENT_PROMPTS, 
     QUESTION_GENERATOR_PROMPT, 
     REACTION_GENERATOR_PROMPT, 
     INTERRUPT_CHECK_PROMPT, 
     JUDGE_CONVERSATION_PROMPT,
-    DIFFICULTY_MODIFIERS
+    DIFFICULTY_MODIFIERS,
+    PERSONA_ANCHORS
 )
 from services.llm import llm_provider
 # Feature 4: Firecrawl MCP Setup
@@ -193,7 +193,7 @@ async def generate_agent_question(session: dict, agent_id: str, provider: str, d
     """Stream one sharp question from the current agent."""
     agent = AGENTS_CONFIG[agent_id]
     conversation_context = build_conversation_context(session)
-    difficulty_instruction = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["standard"])
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["standard"])["question"]
     
     competitor_ctx = ""
     if agent_id == "competitor":
@@ -210,7 +210,7 @@ async def generate_agent_question(session: dict, agent_id: str, provider: str, d
         memory_ctx = f"PITCHER HISTORY:\nThis pitcher has pitched before ({mem.get('pitch_count')} times).\nPrevious pitch: {mem.get('last_pitch_summary')}\nWeakness last time: {mem.get('weaknesses')}\nIf relevant, acknowledge their progress.\n\n"
     
     system = QUESTION_GENERATOR_PROMPT.format(
-        agent_name=agent["name"],
+        persona_anchor=PERSONA_ANCHORS.get(agent_id, ""),
         difficulty_instruction=difficulty_instruction
     )
     
@@ -264,9 +264,9 @@ Find YOUR most important unanswered question."""
 async def generate_agent_reaction(session: dict, agent_id: str, question: str, answer: str, provider: str, difficulty: str = "standard"):
     """Stream agent's reaction after pitcher answers."""
     agent = AGENTS_CONFIG[agent_id]
-    difficulty_instruction = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["standard"])
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["standard"])["reaction"]
     system = REACTION_GENERATOR_PROMPT.format(
-        agent_name=agent["name"],
+        persona_anchor=PERSONA_ANCHORS.get(agent_id, ""),
         question=question,
         answer=answer,
         difficulty_instruction=difficulty_instruction
@@ -309,7 +309,7 @@ React honestly to what the pitcher just said.
         "reaction": full_reaction
     })
 
-async def check_interrupt(session: dict, current_agent_id: str, question: str, answer: str, reaction: str, provider: str) -> dict | None:
+async def check_interrupt(session: dict, current_agent_id: str, question: str, answer: str, reaction: str, provider: str, difficulty: str = "standard") -> dict | None:
     """Check if another agent should interrupt."""
     current_index = session["active_panel"].index(current_agent_id)
     if current_index >= len(session["active_panel"]) - 1:
@@ -320,12 +320,15 @@ async def check_interrupt(session: dict, current_agent_id: str, question: str, a
         return None
     
     conversation_so_far = build_conversation_context(session)
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["standard"])["interrupt"]
+
     prompt = INTERRUPT_CHECK_PROMPT.format(
         agent_name=AGENTS_CONFIG[current_agent_id]["name"],
         question=question,
         answer=answer,
         reaction=reaction,
-        conversation_so_far=conversation_so_far
+        conversation_so_far=conversation_so_far,
+        difficulty_instruction=difficulty_instruction
     )
     
     try:
@@ -416,13 +419,33 @@ async def stream_full_conversation(session_id: str, session: dict, provider: str
         yield sse_event("pitcher_answer_received", {"answer": answer, "agent_id": agent_id})
         
         # STEP C: Agent reacts
-        async for event in generate_agent_reaction(session, agent_id, question, answer, provider, difficulty):
-            yield event
+        # If the user challenged the question, we don't need a summary reaction
+        if answer != "[Skipped by user - Interaction handled via Challenge Mode]":
+            async for event in generate_agent_reaction(session, agent_id, question, answer, provider, difficulty):
+                yield event
+            
+            reaction = session["conversation"][-1]["content"]
+        else:
+            # Silent skip reaction to move panel forward immediately
+            session["conversation"].append({
+                "turn": len(session["conversation"]),
+                "type": "reaction",
+                "agent_id": agent_id,
+                "agent_name": AGENTS_CONFIG[agent_id]["name"],
+                "content": "[Interaction Concluded]",
+                "timestamp": str(asyncio.get_event_loop().time())
+            })
+            yield sse_event("agent_reaction_done", {
+                "agent_id": agent_id,
+                "reaction": "[Interaction Complete]"
+            })
+            reaction = "[Interaction Complete]"
         
-        reaction = session["conversation"][-1]["content"]
-        
-        # STEP D: Interrupt check
-        interrupt = await check_interrupt(session, agent_id, question, answer, reaction, provider)
+        # STEP D: Interrupt check (Skip if turn was challenged to move faster)
+        if answer != "[Skipped by user - Interaction handled via Challenge Mode]":
+            interrupt = await check_interrupt(session, agent_id, question, answer, reaction, provider, difficulty)
+        else:
+            interrupt = None
         if interrupt:
             async for event in stream_interrupt(session, interrupt):
                 yield event
@@ -477,11 +500,20 @@ async def stream_verdict_from_conversation(session_id: str, session: dict, provi
     transcript = build_conversation_context(session)
     user_input = f"PITCH SUMMARY:\n{session['pitch_summary']}\n\nFULL CONVERSATION TRANSCRIPT:\n{transcript}"
     
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(
+        session.get("difficulty", "standard"),
+        DIFFICULTY_MODIFIERS["standard"]
+    )["verdict"]
+
+    system = JUDGE_CONVERSATION_PROMPT.format(
+        difficulty_instruction=difficulty_instruction
+    )
+
     yield sse_event("agent_start", {"agent_id": "judge", "name": "The Judge", "role": "Verdict"})
     
     full_verdict = ""
     try:
-        stream = await llm_provider.generate_response(JUDGE_CONVERSATION_PROMPT, user_input, provider, stream=True)
+        stream = await llm_provider.generate_response(system, user_input, provider, stream=True)
         async for text in stream:
             full_verdict += text
             yield sse_event("agent_token", {"agent_id": "judge", "token": text})
@@ -610,7 +642,46 @@ async def run_round1(session_id: str, session: dict, pitch: str, provider: str, 
     if pitcher_id:
         save_pitcher_memory(pitcher_id, session, session.get("verdict_final") or session.get("verdict", ""))
 
-async def generate_fact_check(agent_claim: str, challenge: str, provider: str) -> str:
-    FACT_CHECK_PROMPT = "You are a neutral fact-checker. Respond in 2 sentences about this claim."
-    user_prompt = f"Agent claim: {agent_claim}\nPitcher challenge: {challenge}"
-    return await llm_provider.generate_response(FACT_CHECK_PROMPT, user_prompt, provider, stream=False)
+async def generate_rebuttal_response(session: dict, agent_id: str, agent_claim: str, user_text: str, provider: str) -> str:
+    agent = AGENTS_CONFIG.get(agent_id, {"name": "Agent", "role": "Panelist"})
+    
+    # Initialize history if it doesn't exist
+    if "rebuttals" not in session:
+        session["rebuttals"] = {}
+    if agent_id not in session["rebuttals"]:
+        session["rebuttals"][agent_id] = []
+        
+    history = session["rebuttals"][agent_id]
+    history_context = "\n".join([f"{'Pitcher' if m['role'] == 'user' else agent['name']}: {m['content']}" for m in history])
+    
+    PROMPT = f"""
+    You are {agent['name']} ({agent['role']}). 
+    You recently made this claim: "{agent_claim}"
+    
+    Current Sub-Conversation History:
+    {history_context}
+    
+    The pitcher just said: "{user_text}"
+    
+    Your task:
+    1. Respond naturally in your own voice.
+    2. Stick to your specific perspective (Skeptical VC, Expert, etc.).
+    3. Be brief — 1-2 sentences maximum.
+    4. You can admit you were wrong if the evidence is sound, or double-down if you are unconvinced.
+    
+    Output ONLY your response.
+    """
+    
+    response = await llm_provider.generate_response(PROMPT, user_text, provider, stream=False)
+    
+    # Update history
+    history.append({"role": "user", "content": user_text})
+    history.append({"role": "agent", "content": response})
+    
+    return response
+
+async def generate_fact_check(agent_id: str, agent_claim: str, challenge: str, provider: str) -> str:
+    # We can reuse the same logic for one-shot challenges
+    agent = AGENTS_CONFIG.get(agent_id, {"name": "Agent", "role": "Panelist"})
+    PROMPT = f"You are {agent['name']} ({agent['role']}). You made this claim: {agent_claim}. Pitcher challenged: {challenge}. Respond in 2 sentences."
+    return await llm_provider.generate_response(PROMPT, challenge, provider, stream=False)
