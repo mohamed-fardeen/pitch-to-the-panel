@@ -64,6 +64,10 @@ class RebuttalRequest(BaseModel):
     rebuttal_text: str
     provider: str = "groq"
 
+class PitcherInterruptRequest(BaseModel):
+    session_id: str
+    message: str = ""  # empty string is valid — means pitcher clicked button without typing
+
 class PushbackRequest(BaseModel):
     session_id: str
     pushback: str
@@ -113,6 +117,21 @@ async def skip_turn(req: SkipRequest):
     session["events"]["answer_event"].set()
     return {"status": "ok"}
 
+@app.post("/api/conversation/interrupt")
+async def interrupt_conversation(req: PitcherInterruptRequest):
+    session = sessions.get(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    session["pending_answer"] = (
+        req.message.strip()
+        if req.message.strip()
+        else "[interrupt_signal]"
+    )
+    session["waiting_for"] = "pitcher_interrupt"
+    session["events"]["answer_event"].set()
+    return {"status": "ok"}
+
 @app.post("/api/pitch/challenge")
 async def challenge_claim(req: ChallengeRequest):
     result = await generate_fact_check(req.agent_id, req.agent_claim, req.challenge_text, req.provider)
@@ -158,7 +177,7 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
 @app.get("/api/stream/pushback")
 async def stream_pushback(request: Request, session_id: str, pushback: str, provider: str = "groq"):
     async def event_generator():
-        async for event in handle_verdict_pushback(session_id, pushback, provider):
+        async for event in handle_verdict_pushback(session_id, pushback, provider, sessions):
             if await request.is_disconnected():
                 break
             yield event

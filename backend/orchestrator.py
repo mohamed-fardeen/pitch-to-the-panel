@@ -1,10 +1,13 @@
 import json
 import asyncio
 import os
+from typing import AsyncGenerator, Tuple, Dict, List, Optional
 from prompts import (
-    QUESTION_GENERATOR_PROMPT, 
-    REACTION_GENERATOR_PROMPT, 
-    INTERRUPT_CHECK_PROMPT, 
+    HOST_PAIR_SELECTION_PROMPT,
+    CONVERSATION_ORCHESTRATOR_PROMPT,
+    HOST_UTTERANCE_PROMPT,
+    OBSERVER_UTTERANCE_PROMPT,
+    PITCHER_INTERRUPT_ACK_PROMPT,
     JUDGE_CONVERSATION_PROMPT,
     DIFFICULTY_MODIFIERS,
     PERSONA_ANCHORS
@@ -176,311 +179,725 @@ def build_conversation_context(session: dict) -> str:
     
     lines = []
     for turn in session["conversation"]:
-        if turn["type"] == "question":
-            lines.append(f"{turn['agent_name']} asked: {turn['content']}")
-        elif turn["type"] == "answer":
-            lines.append(f"Pitcher answered: {turn['content']}")
-        elif turn["type"] == "reaction":
-            lines.append(f"{turn['agent_name']} reacted: {turn['content']}")
-        elif turn["type"] == "interrupt_q":
-            lines.append(f"{turn['agent_name']} jumped in: {turn['content']}")
-        elif turn["type"] == "interrupt_a":
-            lines.append(f"Pitcher replied: {turn['content']}")
+        t = turn["type"]
+        name = turn.get("agent_name", "Unknown")
+        content = turn.get("content", "")
+
+        if t == "question":
+            lines.append(f"{name} asked: {content}")
+        elif t == "answer":
+            lines.append(f"Pitcher answered: {content}")
+        elif t == "reaction":
+            lines.append(f"{name} reacted: {content}")
+        elif t == "interrupt_q":
+            lines.append(f"{name} jumped in: {content}")
+        elif t == "interrupt_a":
+            lines.append(f"Pitcher replied: {content}")
+        elif t == "host_utterance":
+            lines.append(f"{name}: {content}")
+        elif t == "observer_utterance":
+            lines.append(f"{name} (Observer): {content}")
+        elif t == "pitcher_interrupt":
+            lines.append(f"Pitcher (Interruption): {content}")
+        elif t == "interrupt_ack":
+            lines.append(f"{name} (Acknowledging): {content}")
     
     return "\n".join(lines)
 
-async def generate_agent_question(session: dict, agent_id: str, provider: str, difficulty: str = "standard"):
-    """Stream one sharp question from the current agent."""
-    agent = AGENTS_CONFIG[agent_id]
-    conversation_context = build_conversation_context(session)
-    difficulty_instruction = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["standard"])["question"]
+async def select_host_pair(
+    session: dict, 
+    provider: str
+) -> Tuple[str, str]:
+    """
+    Select the two best host agents for this pitch.
+    Returns (host_a_id, host_b_id).
+    host_a is the more skeptical host.
+    """
+    active_panel = session["active_panel"]
+    panel_names = ", ".join([
+        f"{aid} ({AGENTS_CONFIG[aid]['name']})" 
+        for aid in active_panel
+    ])
     
-    competitor_ctx = ""
-    if agent_id == "competitor":
-        yield sse_event("competitor_research_start", {"message": f"{agent['name']} is searching the web..."})
-        try:
-            competitor_ctx = await search_competitors(session["domain"]) + "\n\n"
-        except Exception:
-            pass
-        yield sse_event("competitor_research_done", {})
-        
-    memory_ctx = ""
-    if "pitcher_memory" in session:
-        mem = session["pitcher_memory"]
-        memory_ctx = f"PITCHER HISTORY:\nThis pitcher has pitched before ({mem.get('pitch_count')} times).\nPrevious pitch: {mem.get('last_pitch_summary')}\nWeakness last time: {mem.get('weaknesses')}\nIf relevant, acknowledge their progress.\n\n"
-    
-    system = QUESTION_GENERATOR_PROMPT.format(
-        persona_anchor=PERSONA_ANCHORS.get(agent_id, ""),
-        difficulty_instruction=difficulty_instruction
-    )
-    
-    user_message = f"""{memory_ctx}{competitor_ctx}PITCH SUMMARY:
-{session['pitch_summary']}
-
-CONVERSATION SO FAR:
-{conversation_context}
-
-Now ask your one sharp question as {agent['name']}.
-Remember: read what others asked. Don't repeat their angles.
-Find YOUR most important unanswered question."""
-
-    full_question = ""
-    yield sse_event("agent_question_start", {
-        "agent_id": agent_id,
-        "name": agent["name"],
-        "role": agent["role"],
-        "agent_index": session["current_agent_index"]
-    })
-    
-    try:
-        stream = await llm_provider.generate_response(system, user_message, provider, stream=True)
-        async for text in stream:
-            full_question += text
-            yield sse_event("agent_token", {
-                "agent_id": agent_id,
-                "token": text,
-                "type": "question"
-            })
-    except Exception as e:
-        full_question = f"Error generating question: {str(e)}"
-    
-    # Store in conversation log
-    session["conversation"].append({
-        "turn": len(session["conversation"]),
-        "type": "question",
-        "agent_id": agent_id,
-        "agent_name": agent["name"],
-        "content": full_question,
-        "timestamp": str(asyncio.get_event_loop().time())
-    })
-    
-    yield sse_event("agent_question_done", {
-        "agent_id": agent_id,
-        "question": full_question
-    })
-    
-    session["waiting_for"] = "answer"
-
-async def generate_agent_reaction(session: dict, agent_id: str, question: str, answer: str, provider: str, difficulty: str = "standard"):
-    """Stream agent's reaction after pitcher answers."""
-    agent = AGENTS_CONFIG[agent_id]
-    difficulty_instruction = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["standard"])["reaction"]
-    system = REACTION_GENERATOR_PROMPT.format(
-        persona_anchor=PERSONA_ANCHORS.get(agent_id, ""),
-        question=question,
-        answer=answer,
-        difficulty_instruction=difficulty_instruction
-    )
-    
-    user_message = f"""Stay completely in character as {agent['name']}.
-React honestly to what the pitcher just said.
-1-2 sentences only. No new question. Pure reaction."""
-
-    full_reaction = ""
-    yield sse_event("agent_reaction_start", {
-        "agent_id": agent_id,
-        "name": agent["name"]
-    })
-    
-    try:
-        stream = await llm_provider.generate_response(system, user_message, provider, stream=True)
-        async for text in stream:
-            full_reaction += text
-            yield sse_event("agent_token", {
-                "agent_id": agent_id,
-                "token": text,
-                "type": "reaction"
-            })
-    except Exception as e:
-        full_reaction = f"Error generating reaction: {str(e)}"
-    
-    # Store reaction in conversation log
-    session["conversation"].append({
-        "turn": len(session["conversation"]),
-        "type": "reaction",
-        "agent_id": agent_id,
-        "agent_name": agent["name"],
-        "content": full_reaction,
-        "timestamp": str(asyncio.get_event_loop().time())
-    })
-    
-    yield sse_event("agent_reaction_done", {
-        "agent_id": agent_id,
-        "reaction": full_reaction
-    })
-
-async def check_interrupt(session: dict, current_agent_id: str, question: str, answer: str, reaction: str, provider: str, difficulty: str = "standard") -> dict | None:
-    """Check if another agent should interrupt."""
-    current_index = session["active_panel"].index(current_agent_id)
-    if current_index >= len(session["active_panel"]) - 1:
-        return None
-    
-    interrupt_count = sum(1 for t in session["conversation"] if t["type"] == "interrupt_q")
-    if interrupt_count >= 2:
-        return None
-    
-    conversation_so_far = build_conversation_context(session)
-    difficulty_instruction = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["standard"])["interrupt"]
-
-    prompt = INTERRUPT_CHECK_PROMPT.format(
-        agent_name=AGENTS_CONFIG[current_agent_id]["name"],
-        question=question,
-        answer=answer,
-        reaction=reaction,
-        conversation_so_far=conversation_so_far,
-        difficulty_instruction=difficulty_instruction
+    prompt = HOST_PAIR_SELECTION_PROMPT.format(
+        active_panel_names=panel_names,
+        domain=session.get("domain", {}).get(
+            "sub_domain", "general"
+        ),
+        pitch_summary=session["pitch_summary"]
     )
     
     try:
-        raw = await llm_provider.generate_response("You are a debate moderator. Output only valid JSON.", prompt, provider, stream=False)
+        raw = await llm_provider.generate_response(
+            "Select two host agents. Output only valid JSON.",
+            prompt,
+            provider,
+            stream=False
+        )
         start = raw.find("{")
         end = raw.rfind("}") + 1
         result = json.loads(raw[start:end])
-        
-        if result.get("should_interrupt") and result.get("agent_id"):
-            agent_id = result["agent_id"]
-            if agent_id in session["active_panel"]:
-                interrupting_agent_index = session["active_panel"].index(agent_id)
-                if interrupting_agent_index > current_index:
-                    return result
-        return None
+        host_a = result.get("host_a", active_panel[0])
+        host_b = result.get("host_b", active_panel[1])
+        # Validate both are in active panel
+        if host_a not in active_panel:
+            host_a = active_panel[0]
+        if host_b not in active_panel:
+            host_b = active_panel[1]
+        if host_a == host_b:
+            host_b = active_panel[1] if host_a != active_panel[1] \
+                     else active_panel[2]
+        return host_a, host_b
     except Exception:
-        return None
+        # Fallback: vc as host_a, hostile as host_b
+        # (most contrasting pair by default)
+        fallbacks = [a for a in ["vc", "hostile", "expert",
+                                  "enthusiastic", "competitor",
+                                  "beginner"] 
+                     if a in active_panel]
+        return fallbacks[0], fallbacks[1]
 
-async def stream_interrupt(session: dict, interrupt_data: dict):
-    """Stream an interrupt question."""
-    agent_id = interrupt_data["agent_id"]
+async def get_next_orchestration_decision(
+    session: dict,
+    provider: str,
+    difficulty: str = "standard"
+) -> dict:
+    """
+    Ask the orchestrator what happens next in the 
+    conversation. Returns a decision dict.
+    """
+    host_a_id = session["host_a"]
+    host_b_id = session["host_b"]
+    observers = [
+        aid for aid in session["active_panel"]
+        if aid not in [host_a_id, host_b_id]
+        and aid not in session.get("called_observers", [])
+    ]
+    observer_list = "\n".join([
+        f"- {aid}: {AGENTS_CONFIG[aid]['name']} "
+        f"({AGENTS_CONFIG[aid]['role']})"
+        for aid in observers
+    ]) or "None remaining"
+
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(
+        difficulty, DIFFICULTY_MODIFIERS["standard"]
+    )["question"]
+
+    prompt = CONVERSATION_ORCHESTRATOR_PROMPT.format(
+        host_a_id=host_a_id,
+        host_a_name=AGENTS_CONFIG[host_a_id]["name"],
+        host_a_role=AGENTS_CONFIG[host_a_id]["role"],
+        host_b_id=host_b_id,
+        host_b_name=AGENTS_CONFIG[host_b_id]["name"],
+        host_b_role=AGENTS_CONFIG[host_b_id]["role"],
+        observer_list=observer_list,
+        pitch_summary=session["pitch_summary"],
+        conversation_so_far=build_conversation_context(session),
+        exchange_count=session.get("exchange_count", 0),
+        pitcher_intervention_count=session.get(
+            "pitcher_intervention_count", 0
+        ),
+        difficulty_instruction=difficulty_instruction
+    )
+
+    try:
+        raw = await llm_provider.generate_response(
+            "You are a debate orchestrator. "
+            "Output only valid JSON.",
+            prompt,
+            provider,
+            stream=False
+        )
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        decision = json.loads(raw[start:end])
+        speaker_id = decision.get("speaker_id")
+        next_speaker = decision.get("next_speaker")
+        
+        # Normalize speaker_id if LLM returned a name instead of ID
+        name_to_id = {v["name"]: k for k, v in AGENTS_CONFIG.items()}
+        if speaker_id in name_to_id:
+            speaker_id = name_to_id[speaker_id]
+        
+        # Also handle partial names or shortcuts if host_a/b
+        if speaker_id == "host_a": speaker_id = host_a_id
+        if speaker_id == "host_b": speaker_id = host_b_id
+        
+        decision["speaker_id"] = speaker_id
+        return decision
+    except Exception:
+        # Fallback: alternate between hosts
+        exchange_count = session.get("exchange_count", 0)
+        next_host = host_a_id if exchange_count % 2 == 0 \
+                    else host_b_id
+        return {
+            "next_speaker": "host_a" if next_host == host_a_id 
+                            else "host_b",
+            "speaker_id": next_host,
+            "instruction": "Continue the conversation about "
+                           "the pitch. Make your key point.",
+            "should_ask_pitcher": exchange_count > 0 
+                                  and exchange_count % 4 == 0,
+            "pitcher_question": "What do you think about "
+                                "the concern we just raised?",
+            "observer_to_call": None,
+            "observer_reason": None,
+            "conversation_should_end": exchange_count >= 16
+        }
+
+async def stream_host_utterance(
+    session: dict,
+    agent_id: str,
+    instruction: str,
+    should_ask_pitcher: bool,
+    pitcher_question: str,
+    provider: str,
+    difficulty: str = "standard"
+) -> AsyncGenerator[dict, None]:
+    """
+    Stream a host's natural conversational utterance.
+    Short bursts — 1-3 sentences.
+    """
     agent = AGENTS_CONFIG[agent_id]
-    followup = interrupt_data["followup_question"]
-    
-    session["conversation"].append({
-        "turn": len(session["conversation"]),
-        "type": "interrupt_q",
-        "agent_id": agent_id,
-        "agent_name": agent["name"],
-        "content": followup,
-        "timestamp": str(asyncio.get_event_loop().time())
-    })
-    
-    yield sse_event("interrupt_start", {
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(
+        difficulty, DIFFICULTY_MODIFIERS["standard"]
+    )["question"]
+
+    pitcher_instruction = (
+        f"End your message with this direct question "
+        f"to the pitcher: {pitcher_question}"
+        if should_ask_pitcher
+        else "Do not ask the pitcher anything this turn. "
+             "Talk to the other host."
+    )
+
+    system = HOST_UTTERANCE_PROMPT.format(
+        persona_anchor=PERSONA_ANCHORS.get(agent_id, ""),
+        pitch_summary=session["pitch_summary"],
+        conversation_so_far=build_conversation_context(session),
+        instruction=instruction,
+        difficulty_instruction=difficulty_instruction,
+        pitcher_instruction=pitcher_instruction
+    )
+
+    user_message = (
+        f"Speak now as {agent['name']}. "
+        f"1-2 sentences. Natural and conversational."
+    )
+
+    yield sse_event("agent_utterance_start", {
         "agent_id": agent_id,
         "name": agent["name"],
         "role": agent["role"],
-        "question": followup,
-        "reason": interrupt_data.get("reason", "")
+        "type": "host",
+        "asks_pitcher": should_ask_pitcher,
+        "pitcher_question": pitcher_question 
+                            if should_ask_pitcher else None
     })
 
-async def stream_full_conversation(session_id: str, session: dict, provider: str, difficulty: str = "standard"):
-    """Main hybrid conversation orchestrator."""
+    full_text = ""
+    try:
+        stream = await llm_provider.generate_response(
+            system, user_message, provider, stream=True, max_tokens=80
+        )
+        async for text in stream:
+            # Check for immediate interrupt
+            if session.get("waiting_for") == "pitcher_interrupt":
+                break
+                
+            full_text += text
+            yield sse_event("agent_token", {
+                "agent_id": agent_id,
+                "name": agent["name"],
+                "token": text,
+                "type": "host_utterance"
+            })
+    except Exception as e:
+        full_text = f"Error: {str(e)}"
+
+    session["conversation"].append({
+        "turn": len(session["conversation"]),
+        "type": "host_utterance",
+        "agent_id": agent_id,
+        "agent_name": agent["name"],
+        "content": full_text,
+        "asks_pitcher": should_ask_pitcher,
+        "timestamp": str(asyncio.get_event_loop().time())
+    })
+
+    session["exchange_count"] = \
+        session.get("exchange_count", 0) + 1
+
+    yield sse_event("agent_utterance_done", {
+        "agent_id": agent_id,
+        "name": agent["name"],
+        "content": full_text,
+        "asks_pitcher": should_ask_pitcher
+    })
+
+    if should_ask_pitcher and session.get("waiting_for") != "pitcher_interrupt":
+        session["waiting_for"] = "answer"
+
+async def stream_observer_utterance(
+    session: dict,
+    agent_id: str,
+    observer_reason: str,
+    provider: str,
+    difficulty: str = "standard"
+) -> AsyncGenerator[dict, None]:
+    """
+    Stream a called-in observer agent's single contribution.
+    They speak once then step back.
+    """
+    agent = AGENTS_CONFIG[agent_id]
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(
+        difficulty, DIFFICULTY_MODIFIERS["standard"]
+    )["question"]
+
+    system = OBSERVER_UTTERANCE_PROMPT.format(
+        persona_anchor=PERSONA_ANCHORS.get(agent_id, ""),
+        pitch_summary=session["pitch_summary"],
+        conversation_so_far=build_conversation_context(session),
+        observer_reason=observer_reason,
+        difficulty_instruction=difficulty_instruction
+    )
+
+    user_message = (
+        f"Speak now as {agent['name']}. "
+        f"2-3 sentences. Make your key point."
+    )
+
+    yield sse_event("agent_utterance_start", {
+        "agent_id": agent_id,
+        "name": agent["name"],
+        "role": agent["role"],
+        "type": "observer",
+        "reason": observer_reason
+    })
+
+    full_text = ""
+    try:
+        stream = await llm_provider.generate_response(
+            system, user_message, provider, stream=True
+        )
+        async for text in stream:
+            # Check for immediate interrupt
+            if session.get("waiting_for") == "pitcher_interrupt":
+                full_text += "... [INTERRUPTED]"
+                break
+
+            full_text += text
+            yield sse_event("agent_token", {
+                "agent_id": agent_id,
+                "name": agent["name"],
+                "token": text,
+                "type": "observer_utterance"
+            })
+    except Exception as e:
+        full_text = f"Error: {str(e)}"
+
+    session["conversation"].append({
+        "turn": len(session["conversation"]),
+        "type": "observer_utterance",
+        "agent_id": agent_id,
+        "agent_name": agent["name"],
+        "content": full_text,
+        "timestamp": str(asyncio.get_event_loop().time())
+    })
+
+    # Mark this observer as called — they can't be 
+    # called again this session
+    if "called_observers" not in session:
+        session["called_observers"] = []
+    session["called_observers"].append(agent_id)
+
+    session["exchange_count"] = \
+        session.get("exchange_count", 0) + 1
+
+    yield sse_event("agent_utterance_done", {
+        "agent_id": agent_id,
+        "name": agent["name"],
+        "content": full_text,
+        "type": "observer"
+    })
+
+async def stream_pitcher_interrupt_ack(
+    session: dict,
+    pitcher_message: str,
+    provider: str,
+    difficulty: str = "standard",
+    respondent_id: Optional[str] = None
+) -> AsyncGenerator[dict, None]:
+    """
+    Stream the chosen host's acknowledgement of 
+    a pitcher interrupt.
+    """
+    intervention_count = session.get(
+        "pitcher_intervention_count", 0
+    )
+    if not respondent_id:
+        host_a = session["host_a"]
+        host_b = session["host_b"]
+        respondent_id = host_a if intervention_count % 2 == 0 \
+                             else host_b
+
+    agent = AGENTS_CONFIG[respondent_id]
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(
+        difficulty, DIFFICULTY_MODIFIERS["standard"]
+    )["reaction"]
+
+    # Detect if pitcher sent actual content or just clicked the button
+    is_signal_only = (
+        not pitcher_message.strip() or
+        pitcher_message.strip() == "[interrupt_signal]"
+    )
+
+    # Get pitcher name from session if available
+    pitcher_name = session.get("pitcher_name", "our pitcher")
+    if not pitcher_name or pitcher_name.strip() == "":
+        pitcher_name = "our pitcher"
+        
+    import random
+    responses = [
+        f"Oh, looks like {pitcher_name} wants to jump in. Go ahead.",
+        f"Actually, {pitcher_name} looks like they have something to add. What's on your mind?",
+        f"Wait, let's hear what {pitcher_name} has to say. Go ahead!"
+    ]
+    full_text = random.choice(responses)
+
+    yield sse_event("agent_utterance_start", {
+        "agent_id": respondent_id,
+        "name": agent["name"],
+        "role": agent["role"],
+        "type": "interrupt_ack"
+    })
+
+    # Give the frontend TTS engine a split second to reset after cancelling
+    # the previous speech, avoiding a notorious Chrome bug.
+    await asyncio.sleep(0.5)
+
+    yield sse_event("agent_token", {
+        "agent_id": respondent_id,
+        "name": agent["name"],
+        "token": full_text,
+        "type": "interrupt_ack"
+    })
+
+    session["conversation"].append({
+        "turn": len(session["conversation"]),
+        "type": "interrupt_ack",
+        "agent_id": respondent_id,
+        "agent_name": agent["name"],
+        "content": full_text,
+        "timestamp": str(asyncio.get_event_loop().time())
+    })
+
+    session["pitcher_intervention_count"] = \
+        intervention_count + 1
+    session["exchange_count"] = \
+        session.get("exchange_count", 0) + 1
+
+    yield sse_event("agent_utterance_done", {
+        "agent_id": respondent_id,
+        "name": agent["name"],
+        "content": full_text,
+        "type": "interrupt_ack"
+    })
+
+async def get_interrupt_respondent(session: dict, pitcher_message: str, provider: str) -> str:
+    host_a = session["host_a"]
+    host_b = session["host_b"]
+    
+    agent_a = AGENTS_CONFIG[host_a]
+    agent_b = AGENTS_CONFIG[host_b]
+    
+    prompt = f"""
+    You are a conversation orchestrator for a pitch panel.
+    Pitcher interrupted: "{pitcher_message}"
+    
+    Hosts:
+    - {host_a}: {agent_a['name']} ({agent_a['role']})
+    - {host_b}: {agent_b['name']} ({agent_b['role']})
+    
+    Which host should respond? 
+    - Use 'vc' or 'hostile' for pressure/skepticism.
+    - Use 'enthusiastic' or 'expert' for technical or positive points.
+    
+    Output ONLY the agent_id.
+    """
+    try:
+        resp = await llm_provider.generate_response(prompt, pitcher_message, provider, stream=False)
+        chosen = resp.strip().lower()
+        if chosen in [host_a, host_b]:
+            return chosen
+    except Exception:
+        pass
+    return host_a
+
+async def stream_notebooklm_conversation(
+    session_id: str,
+    session: dict,
+    provider: str,
+    difficulty: str = "standard"
+) -> AsyncGenerator[dict, None]:
+    """
+    NotebookLM-style conversation orchestrator.
+    Two hosts are discussing the pitch:
+Host A: {host_a_id} ({host_a_name}, {host_a_role})
+Host B: {host_b_id} ({host_b_name}, {host_b_role})
+
+Observer agents available to call in:
+{observer_list}
+    """
+
+    # ── SETUP ────────────────────────────────────────
+    host_a, host_b = await select_host_pair(
+        session, provider
+    )
+    session["host_a"] = host_a
+    session["host_b"] = host_b
+    session["called_observers"] = []
+    session["exchange_count"] = 0
+    session["pitcher_intervention_count"] = 0
+    session["waiting_for"] = None
+
+    yield sse_event("hosts_selected", {
+        "host_a": {
+            "agent_id": host_a,
+            "name": AGENTS_CONFIG[host_a]["name"],
+            "role": AGENTS_CONFIG[host_a]["role"]
+        },
+        "host_b": {
+            "agent_id": host_b,
+            "name": AGENTS_CONFIG[host_b]["name"],
+            "role": AGENTS_CONFIG[host_b]["role"]
+        },
+        "observers": [
+            {
+                "agent_id": aid,
+                "name": AGENTS_CONFIG[aid]["name"],
+                "role": AGENTS_CONFIG[aid]["role"]
+            }
+            for aid in session["active_panel"]
+            if aid not in [host_a, host_b]
+        ],
+        "session_id": session_id
+    })
+
     yield sse_event("status", {
-        "message": "Panel is ready. First question coming...",
+        "message": "Panel is live. The hosts are discussing "
+                   "your pitch...",
         "phase": "conversation_start"
     })
-    
-    active_panel = session["active_panel"]
-    
-    for agent_index, agent_id in enumerate(active_panel):
-        session["current_agent_index"] = agent_index
-        session["current_agent_id"] = agent_id
-        
-        # STEP A: Agent asks question
-        async for event in generate_agent_question(session, agent_id, provider, difficulty):
-            yield event
-        
-        question = session["conversation"][-1]["content"]
-        
-        # STEP B: Wait for pitcher's answer
-        session["events"]["answer_event"].clear()
-        session["waiting_for"] = "answer"
-        
-        yield sse_event("waiting_for_answer", {
-            "agent_id": agent_id,
-            "agent_name": AGENTS_CONFIG[agent_id]["name"],
-            "question": question,
-            "agent_index": agent_index,
-            "total_agents": len(active_panel),
-            "session_id": session_id
-        })
-        
-        await session["events"]["answer_event"].wait()
-        answer = session["pending_answer"]
-        session["pending_answer"] = ""
-        session["waiting_for"] = None
-        
-        session["conversation"].append({
-            "turn": len(session["conversation"]),
-            "type": "answer",
-            "agent_id": "pitcher",
-            "agent_name": "Pitcher",
-            "content": answer,
-            "timestamp": str(asyncio.get_event_loop().time())
-        })
-        
-        yield sse_event("pitcher_answer_received", {"answer": answer, "agent_id": agent_id})
-        
-        # STEP C: Agent reacts
-        # If the user challenged the question, we don't need a summary reaction
-        if answer != "[Skipped by user - Interaction handled via Challenge Mode]":
-            async for event in generate_agent_reaction(session, agent_id, question, answer, provider, difficulty):
-                yield event
-            
-            reaction = session["conversation"][-1]["content"]
-        else:
-            # Silent skip reaction to move panel forward immediately
-            session["conversation"].append({
-                "turn": len(session["conversation"]),
-                "type": "reaction",
-                "agent_id": agent_id,
-                "agent_name": AGENTS_CONFIG[agent_id]["name"],
-                "content": "[Interaction Concluded]",
-                "timestamp": str(asyncio.get_event_loop().time())
-            })
-            yield sse_event("agent_reaction_done", {
-                "agent_id": agent_id,
-                "reaction": "[Interaction Complete]"
-            })
-            reaction = "[Interaction Complete]"
-        
-        # STEP D: Interrupt check (Skip if turn was challenged to move faster)
-        if answer != "[Skipped by user - Interaction handled via Challenge Mode]":
-            interrupt = await check_interrupt(session, agent_id, question, answer, reaction, provider, difficulty)
-        else:
-            interrupt = None
-        if interrupt:
-            async for event in stream_interrupt(session, interrupt):
-                yield event
-            
-            int_q = interrupt["followup_question"]
-            int_id = interrupt["agent_id"]
-            
+
+    # ── MAIN CONVERSATION LOOP ────────────────────────
+    last_active_agent = None
+    while True:
+
+        # Check for pitcher interrupt first
+        if session.get("waiting_for") == "pitcher_interrupt":
             session["events"]["answer_event"].clear()
-            session["waiting_for"] = "interrupt_answer"
             
-            yield sse_event("waiting_for_answer", {
-                "agent_id": int_id,
-                "agent_name": AGENTS_CONFIG[int_id]["name"],
-                "question": int_q,
-                "is_interrupt": True,
-                "session_id": session_id
+            # 1. SHOW INPUT BOX AND INVITE IMMEDIATELY
+            yield sse_event("waiting_for_pitcher_interrupt", {
+                "session_id": session_id,
+                "message": "You interrupted — go ahead"
             })
+
+            # 2. ACKNOWLEDGMENT (Intent to speak)
+            # Use whoever was just speaking as the one to acknowledge
+            respondent_id = last_active_agent or session["host_a"]
             
+            async for event in stream_pitcher_interrupt_ack(
+                session, "", provider, difficulty, respondent_id
+            ):
+                yield event
+
+            # 3. WAIT (User is already typing)
             await session["events"]["answer_event"].wait()
-            int_a = session["pending_answer"]
+            pitcher_msg = session["pending_answer"]
             session["pending_answer"] = ""
             session["waiting_for"] = None
             
+            yield sse_event("pitcher_interrupted", {
+                "content": pitcher_msg,
+                "session_id": session_id
+            })
+
+            # Log the pitcher interrupt
             session["conversation"].append({
                 "turn": len(session["conversation"]),
-                "type": "interrupt_a",
+                "type": "pitcher_interrupt",
                 "agent_id": "pitcher",
                 "agent_name": "Pitcher",
-                "content": int_a,
+                "content": pitcher_msg,
                 "timestamp": str(asyncio.get_event_loop().time())
             })
-            
-            yield sse_event("interrupt_answer_received", {"answer": int_a, "agent_id": int_id})
+
+            await asyncio.sleep(0.3)
+            continue
+
+        # Ensure answer_event is clean before setting up the race condition
+        session["events"]["answer_event"].clear()
+
+        # Get orchestrator decision asynchronously so it can be interrupted
+        decision_task = asyncio.create_task(
+            get_next_orchestration_decision(session, provider, difficulty)
+        )
+        interrupt_task = asyncio.create_task(session["events"]["answer_event"].wait())
         
-        await asyncio.sleep(0.4)
+        done, pending = await asyncio.wait(
+            [decision_task, interrupt_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        
+        if session.get("waiting_for") == "pitcher_interrupt":
+            if decision_task in pending:
+                decision_task.cancel()
+            continue
+            
+        if interrupt_task in pending:
+            interrupt_task.cancel()
+
+        if not decision_task.done():
+            # In case the event fired for some other unknown reason, avoid the state crash
+            decision_task.cancel()
+            continue
+            
+        decision = decision_task.result()
+
+        # Check if conversation should end
+        if decision.get("conversation_should_end"):
+            break
+
+        next_speaker = decision.get("next_speaker", "")
+        speaker_id = decision.get("speaker_id")
+        instruction = decision.get(
+            "instruction", "Continue the discussion."
+        )
+        should_ask_pitcher = decision.get(
+            "should_ask_pitcher", False
+        ) or (next_speaker == "ask_pitcher")
+        
+        pitcher_question = decision.get(
+            "pitcher_question", ""
+        )
+        observer_to_call = decision.get("observer_to_call")
+        observer_reason = decision.get("observer_reason", "")
+
+        # ── OBSERVER CALLED IN ────────────────────────
+        if (next_speaker == "call_observer" or observer_to_call) and observer_to_call:
+            session["called_observers"] = session.get("called_observers", []) + [observer_to_call]
+            last_active_agent = observer_to_call
+            async for event in stream_observer_utterance(
+                session, observer_to_call,
+                observer_reason, provider, difficulty
+            ):
+                yield event
+            
+            session["exchange_count"] = session.get("exchange_count", 0) + 1
+            await asyncio.sleep(0.4)
+
+            # If observer asked the pitcher something,
+            # wait for answer
+            last_turn = session["conversation"][-1]
+            if "?" in last_turn.get("content", ""):
+                session["events"]["answer_event"].clear()
+                session["waiting_for"] = "answer"
+
+                yield sse_event("waiting_for_answer", {
+                    "agent_id": observer_to_call,
+                    "agent_name": AGENTS_CONFIG[
+                        observer_to_call
+                    ]["name"],
+                    "question": last_turn["content"],
+                    "is_observer": True,
+                    "session_id": session_id
+                })
+
+                await session["events"]["answer_event"].wait()
+                obs_answer = session["pending_answer"]
+                session["pending_answer"] = ""
+                session["waiting_for"] = None
+
+                session["conversation"].append({
+                    "turn": len(session["conversation"]),
+                    "type": "answer",
+                    "agent_id": "pitcher",
+                    "agent_name": "Pitcher",
+                    "content": obs_answer,
+                    "timestamp": str(
+                        asyncio.get_event_loop().time()
+                    )
+                })
+
+                yield sse_event("pitcher_answer_received", {
+                    "answer": obs_answer,
+                    "agent_id": observer_to_call
+                })
+
+            continue
+
+        # ── HOST SPEAKS ───────────────────────────────
+        if (next_speaker in ("host_a", "host_b", "ask_pitcher") or next_speaker.startswith("host")) \
+                and speaker_id:
+            last_active_agent = speaker_id
+            async for event in stream_host_utterance(
+                session, speaker_id, instruction,
+                should_ask_pitcher, pitcher_question,
+                provider, difficulty
+            ):
+                yield event
+
+            session["exchange_count"] = session.get("exchange_count", 0) + 1
+            await asyncio.sleep(0.3)
+
+            # If host asked the pitcher, wait for answer
+            if should_ask_pitcher:
+                session["events"]["answer_event"].clear()
+                session["waiting_for"] = "answer"
+
+                yield sse_event("waiting_for_answer", {
+                    "agent_id": speaker_id,
+                    "agent_name": AGENTS_CONFIG[
+                        speaker_id
+                    ]["name"],
+                    "question": pitcher_question,
+                    "session_id": session_id
+                })
+
+                await session["events"]["answer_event"].wait()
+                answer = session["pending_answer"]
+                session["pending_answer"] = ""
+                session["waiting_for"] = None
+
+                session["conversation"].append({
+                    "turn": len(session["conversation"]),
+                    "type": "answer",
+                    "agent_id": "pitcher",
+                    "agent_name": "Pitcher",
+                    "content": answer,
+                    "timestamp": str(
+                        asyncio.get_event_loop().time()
+                    )
+                })
+
+                session["pitcher_intervention_count"] = session.get("pitcher_intervention_count", 0) + 1
+                yield sse_event("pitcher_answer_received", {
+                    "answer": answer,
+                    "agent_id": speaker_id
+                })
+
+            continue
+
+        # If we got here and didn't match host or observer, 
+        # let's just use the fallback next time instead of breaking
+        session["exchange_count"] = session.get("exchange_count", 0) + 1
+        await asyncio.sleep(0.1)
+        continue
+
+        # Safety: if decision is unclear, break
+        break
     
     # Complete
     session["phase"] = "verdict"
@@ -536,7 +953,7 @@ async def stream_verdict_from_conversation(session_id: str, session: dict, provi
     
     yield sse_event("verdict_pushback_available", {"session_id": session_id, "message": "You can push back on one part."})
 
-async def handle_verdict_pushback(session_id: str, pushback: str, provider: str):
+async def handle_verdict_pushback(session_id: str, pushback: str, provider: str, sessions: dict):
     """Judge responds to pushback."""
     session = sessions.get(session_id) # Note: sessions needs to be accessible, usually passed or global
     if not session: return
@@ -568,7 +985,7 @@ AGENTS_CONFIG = {
 }
 
 # The initial round 1 flow which now incorporates HITL
-async def run_round1(session_id: str, session: dict, pitch: str, provider: str, pitcher_id: str = None, difficulty: str = "standard"):
+async def run_round1(session_id: str, session: dict, pitch: str, provider: str, pitcher_id: Optional[str] = None, difficulty: str = "standard"):
     # EXTRACT SUMMARY
     summary_prompt = "Summarize this startup pitch in 2-3 clear sentences focusing on the core problem, solution, and business model. Never use pleasantries."
     try:
@@ -612,6 +1029,7 @@ async def run_round1(session_id: str, session: dict, pitch: str, provider: str, 
     await session["events"]["summary_approved"].wait()
 
     final_summary = session["hitl_data"].get("corrected_summary") or summary
+    session["pitcher_name"] = pitcher_id or "our pitcher"
     session["pitch_summary"] = final_summary
     session["domain"] = domain_data
 
@@ -636,7 +1054,7 @@ async def run_round1(session_id: str, session: dict, pitch: str, provider: str, 
     yield sse_event("domain_classified", {**domain_data, "active_panel": active_panel})
     
     # Instead of running all agents at once, we move to the conversation orchestrator
-    async for event in stream_full_conversation(session_id, session, provider, difficulty):
+    async for event in stream_notebooklm_conversation(session_id, session, provider, difficulty):
         yield event
         
     if pitcher_id:
@@ -668,6 +1086,8 @@ async def generate_rebuttal_response(session: dict, agent_id: str, agent_claim: 
     2. Stick to your specific perspective (Skeptical VC, Expert, etc.).
     3. Be brief — 1-2 sentences maximum.
     4. You can admit you were wrong if the evidence is sound, or double-down if you are unconvinced.
+    
+    If the user references something you do not recognise or that may not exist, respond honestly and simply. Say something like: 'I'm not familiar with that — could you tell me more about what it is?' Never be dismissive or sarcastic about it. Treat the gap as an opportunity to learn more from the pitcher, not as a mistake to call out.
     
     Output ONLY your response.
     """

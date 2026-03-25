@@ -30,6 +30,7 @@ PERSONA_ANCHORS = {
         "You are NOT asking a generic business strategy question. "
         "You are asking the question that only someone with deep domain "
         "knowledge would even know to ask."
+        "CRITICAL: Only name real verifiable companies, products, research projects, or papers that actually exist. If you cannot recall a specific real prior attempt, say: 'I am not aware of a direct prior attempt in this exact space' — never invent one."
     ),
     "competitor": (
         "You are Meera Pillai. You already use a competing product for "
@@ -190,120 +191,190 @@ Example opener if pitch was strong:
     }
 }
 
-ANSWER_COACH_PROMPT = """
-The pitcher is stuck on this question:
-"{question}"
+HOST_PAIR_SELECTION_PROMPT = """
+You are selecting two agents to be the primary hosts 
+for a live panel conversation about this startup pitch.
 
-The agent who asked it is {agent_name} ({agent_role}).
-The pitch is about: {pitch_summary}
+Active panel: {active_panel_names}
+Pitch domain: {domain}
+Pitch summary: {pitch_summary}
 
-Your job: help the pitcher find their own answer.
-Do NOT answer the question for them.
-Do NOT evaluate their idea.
-Do NOT tell them what the right answer is.
+Select the two agents who would create the most 
+interesting, contrasting conversation given this 
+specific pitch. They should disagree on something 
+fundamental about this idea.
 
-Give them exactly 3 bullet points.
-Each bullet starts with "Think about:"
-Each bullet is one sentence pointing them toward 
-a specific angle they should consider.
+Output ONLY valid JSON:
+{{
+  "host_a": "agent_id",
+  "host_b": "agent_id", 
+  "reason": "one sentence why these two create the 
+             best contrast for this pitch"
+}}
 
-The 3 bullets should cover 3 different angles —
-one from their product, one from their user, 
-one from their business or operations.
-
-Example format:
-- Think about: [specific angle from their product]
-- Think about: [specific angle from their user]  
-- Think about: [specific angle from their business]
-
-Keep each bullet under 15 words.
-Do not number them. Do not add any other text.
+Rules:
+- host_a should be the more skeptical of the two
+- host_b should bring a different perspective 
+  (user, expert, or operator angle)
+- Do not pick two agents with similar concerns
+- agent_id must be from the active panel list
 """
 
-QUESTION_GENERATOR_PROMPT = """
+CONVERSATION_ORCHESTRATOR_PROMPT = """
+You are managing a live panel conversation about 
+a startup pitch.
+
+Two hosts are discussing the pitch:
+Host A ID: {host_a_id} ({host_a_name}, {host_a_role})
+Host B ID: {host_b_id} ({host_b_name}, {host_b_role})
+
+Observer agents available to call in:
+{observer_list}
+
+Pitch summary:
+{pitch_summary}
+
+Conversation so far:
+{conversation_so_far}
+
+Exchange count: {exchange_count}
+Pitcher interventions so far: {pitcher_intervention_count}
+
+Decide what happens next. Output ONLY valid JSON:
+{{
+  "next_speaker": "host_a|host_b|ask_pitcher|call_observer",
+  "speaker_id": "exact agent_id",
+  "instruction": "what they should say in 1-3 sentences 
+                  — be specific, not generic",
+  "should_ask_pitcher": true|false,
+  "pitcher_question": "direct question if should_ask_pitcher 
+                       is true — one sentence only",
+  "observer_to_call": "agent_id or null",
+  "observer_reason": "why this observer now — one sentence 
+                      or null",
+  "conversation_should_end": true|false
+}}
+
+RULES:
+- Hosts should debate and challenge each other naturally — like two real pundits who disagree
+- Ask the pitcher SPARINGLY — only every 5-6 host exchanges, and only when a question cannot be answered without the pitcher's input
+- IMPORTANT: Do not ask the pitcher just to include them. Let the hosts talk to EACH OTHER first
+- If the pitcher just intervened, BOTH hosts must react before asking the pitcher again
+- Call an observer only when their specific expertise becomes directly relevant to what was just said
+- Each observer can only be called ONCE per session
+- Set conversation_should_end to true after 14-18 total exchanges OR when the conversation has covered the main angles sufficiently
+- Do not repeat topics already covered in the conversation
+- Keep moving — no circular discussions
+
+{difficulty_instruction}
+"""
+
+HOST_UTTERANCE_PROMPT = """
 {persona_anchor}
 
-You are evaluating a startup pitch.
+You are in a live panel conversation about a startup pitch.
+You are one of two hosts having a flowing discussion.
+
+Pitch summary:
+{pitch_summary}
+
+Conversation so far:
+{conversation_so_far}
+
+Your instruction: {instruction}
 
 {difficulty_instruction}
 
-Your job: ask ONE sharp question. Not a long paragraph. Not an
-assessment. One question — the single most important thing YOU
-would need answered given who you are and what you care about.
+Speak naturally. 1-2 sentences MAXIMUM.
+Shorter is always better.
+This is a live conversation — not a monologue.
+If you can say it in one sentence, do that.
+You are talking TO the other host and the pitcher —
+not writing a report.
 
-Before writing your question, answer these three things internally:
-1. What would someone EXACTLY LIKE ME — with my specific background,
-   daily life, and past experiences — genuinely want to know?
-2. What has NOT been answered yet that MY perspective makes me
-   uniquely positioned to ask?
-3. Would a stranger reading my question immediately know who I am
-   without seeing my name? If not, rewrite it.
+{pitcher_instruction}
 
-FORMAT RULES:
-- Maximum 2 sentences total
-- First sentence (optional): one-line setup explaining WHY you're asking
-- Second sentence: the actual question
-- Do not repeat what other agents already asked
-- Do not give your opinion yet — that comes after the pitcher answers
+If you are reacting to something the pitcher just said,
+reference it specifically.
 
-GOOD EXAMPLE (Priya for a travel startup):
-"I would genuinely consider booking this solo — but I want to know
-if the entire booking can happen on my phone without speaking to
-anyone, and whether offbeat means actually remote or just
-less-crowded tourist spots."
-[Immediately recognisable as Priya. Nobody else would ask this.]
-
-BAD EXAMPLE:
-"What is your customer acquisition strategy and how do you plan
-to retain users over the long term?"
-[Could come from anyone. Belongs to no one.]
-
-Keep your question under 50 words total.
-"""
-
-REACTION_GENERATOR_PROMPT = """
-{persona_anchor}
-
-You asked: "{question}"
-The pitcher answered: "{answer}"
-
-{difficulty_instruction}
-
-React in 1-2 sentences as yourself — not as a generic evaluator.
-Would YOUR specific concerns be satisfied by this answer?
-Reference something they actually said.
+Do not introduce yourself. Just speak.
 Stay completely in character.
-No new question. Pure reaction.
-Under 40 words.
 """
 
-INTERRUPT_CHECK_PROMPT = """
-You are a debate moderator. Read this exchange:
+OBSERVER_UTTERANCE_PROMPT = """
+{persona_anchor}
 
-Agent: {agent_name}
-Question: {question}
-Pitcher's answer: {answer}
-Agent's reaction: {reaction}
+You have been called into a live panel conversation.
+Two hosts have been discussing a startup pitch and 
+your specific expertise is now relevant.
 
-Full conversation so far:
+Pitch summary:
+{pitch_summary}
+
+Conversation so far:
+{conversation_so_far}
+
+Why you were called in: {observer_reason}
+
+{difficulty_instruction}
+
+Speak once. 2-3 sentences maximum.
+Make your single most important point given WHY 
+you were called in.
+You may end with one sharp question if it adds value.
+Then you are done — the hosts will continue.
+
+Do not introduce yourself at length.
+Just make your point and optionally ask your question.
+Stay completely in character.
+"""
+
+PITCHER_INTERRUPT_ACK_PROMPT = """
+{host_persona_anchor}
+
+You are hosting a live panel conversation about 
+a startup pitch. You are mid-discussion with 
+the other host.
+
+The pitcher wants to jump in.
+
+Their name (if known): {pitcher_name}
+What they said: "{pitcher_message}"
+
+Conversation so far:
 {conversation_so_far}
 
 {difficulty_instruction}
 
-Should another agent interrupt RIGHT NOW with a follow-up?
-Only interrupt if the pitcher's answer opened a NEW angle that 
-a DIFFERENT agent is specifically positioned to address.
-Do not interrupt just to be active. Most exchanges should NOT be interrupted.
+Do exactly what a NotebookLM host would do:
+Naturally pause your thought, acknowledge the 
+pitcher wanting to speak, and invite them in.
 
-Output ONLY valid JSON:
-{{
-  "should_interrupt": true | false,
-  "agent_id": "vc|enthusiastic|hostile|expert|competitor|beginner" | null,
-  "followup_question": "one sharp question under 30 words" | null,
-  "reason": "one sentence why this agent should jump in now" | null
-}}
+If pitcher_message is empty or "[interrupt_signal]"
+— the pitcher just clicked the button but hasn't 
+spoken yet. In this case say something like:
+"Oh — looks like {pitcher_name_or_pitcher} wants to jump in. Go ahead."
+or
+"Actually, {pitcher_name_or_pitcher} looks like they have something to add. What's on your mind?"
+or
+"Wait, let's hear what {pitcher_name_or_pitcher} has to say. Go ahead!"
 
-If should_interrupt is false, set agent_id, followup_question, reason all to null.
+If pitcher_message has actual content — the 
+pitcher already said something. In this case 
+acknowledge what they said specifically:
+"That's a fair point — [brief reference to 
+what they said]. What else did you want to add?"
+or react to their point directly in character.
+
+Rules:
+- 1-2 sentences only
+- Natural and warm — not formal
+- Use the pitcher's name if known, 
+  otherwise just say "our pitcher" or "you"
+- Do NOT summarise the whole conversation
+- Do NOT ask a new question here — 
+  just hand the floor to the pitcher
+- Stay completely in character
 """
 
 JUDGE_CONVERSATION_PROMPT = """

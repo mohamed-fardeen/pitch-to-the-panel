@@ -20,48 +20,83 @@ export function VerdictCard({ verdict, sessionId, onClose }: VerdictCardProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-in fade-in duration-300" onClick={onClose}>
-      <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 max-w-2xl w-full rounded-2xl shadow-2xl p-8 transform transition-all translate-y-0 relative" onClick={(e) => e.stopPropagation()}>
-        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white flex items-center justify-center w-8 h-8 rounded-full bg-gray-800 hover:bg-gray-700 transition-colors">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-        <h2 className="text-3xl font-extrabold mb-6 text-center bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-cyan-400">
-          Panel Verdict
-        </h2>
-        
-        <div className="space-y-6">
-          <div className="bg-emerald-500/10 border border-emerald-500/20 p-5 rounded-xl text-emerald-50">
-            <h3 className="text-emerald-400 font-bold mb-2 uppercase tracking-wide text-xs">Your Strongest Point</h3>
-            <p className="text-sm leading-relaxed">{strongest || verdict}</p>
+    <div className="fixed inset-0 bg-surface/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-500" onClick={onClose}>
+      <div 
+        className="glass-card ghost-border max-w-2xl w-full rounded-3xl shadow-[0_32px_64px_-12px_rgba(0,0,0,0.5)] p-0 overflow-hidden transform transition-all translate-y-0" 
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header Section */}
+        <div className="p-8 pb-4 text-center relative border-b border-outline-variant/10">
+          <button onClick={onClose} className="absolute top-6 right-6 text-on-surface-variant/40 hover:text-white transition-colors">
+            <span className="material-symbols-outlined">close</span>
+          </button>
+          
+          <div className="inline-flex items-center gap-2 mb-4 bg-primary/10 px-4 py-1.5 rounded-full border border-primary/20">
+             <span className="material-symbols-outlined text-[16px] text-primary">verified</span>
+             <span className="text-[10px] font-black font-label uppercase tracking-[0.2em] text-primary">System Evaluation Complete</span>
           </div>
           
+          <h2 className="text-4xl font-manrope font-black text-white uppercase tracking-tighter mb-2">
+            Panel <span className="text-primary">Verdict</span>
+          </h2>
+          <p className="text-on-surface-variant/60 text-xs font-label uppercase tracking-widest">Protocol ID: {sessionId.slice(0, 8)}</p>
+        </div>
+        
+        {/* Content Section */}
+        <div className="p-8 space-y-6">
+          {/* Strongest Point */}
+          <div className="group transition-all duration-300">
+            <h3 className="text-[10px] font-black font-label uppercase tracking-[0.2em] text-primary mb-3 flex items-center gap-2">
+              <span className="w-4 h-px bg-primary/30"></span>
+              Strongest Point
+            </h3>
+            <div className="bg-surface-container-low/40 border border-outline-variant/10 p-5 rounded-2xl text-on-surface transition-all group-hover:border-primary/20 group-hover:bg-primary/5">
+              <p className="text-sm leading-relaxed">{strongest || verdict}</p>
+            </div>
+          </div>
+          
+          {/* Weakness */}
           {weakness && (
-            <div className="bg-red-500/10 border border-red-500/20 p-5 rounded-xl text-red-50">
-              <h3 className="text-red-400 font-bold mb-2 uppercase tracking-wide text-xs">Your Biggest Weakness</h3>
-              <p className="text-sm leading-relaxed">{weakness}</p>
+            <div className="group transition-all duration-300">
+              <h3 className="text-[10px] font-black font-label uppercase tracking-[0.2em] text-tertiary mb-3 flex items-center gap-2">
+                <span className="w-4 h-px bg-tertiary/30"></span>
+                Critical Weakness
+              </h3>
+              <div className="bg-surface-container-low/40 border border-outline-variant/10 p-5 rounded-2xl text-on-surface transition-all group-hover:border-tertiary/20 group-hover:bg-tertiary/5">
+                <p className="text-sm leading-relaxed">{weakness}</p>
+              </div>
             </div>
           )}
           
+          {/* Fix */}
           {toFix && (
-            <div className="bg-blue-500/10 border border-blue-500/20 p-5 rounded-xl text-blue-50">
-              <h3 className="text-blue-400 font-bold mb-2 uppercase tracking-wide text-xs">One Thing to Fix</h3>
-              <p className="text-sm leading-relaxed">{toFix}</p>
+            <div className="group transition-all duration-300">
+              <h3 className="text-[10px] font-black font-label uppercase tracking-[0.2em] text-primary/70 mb-3 flex items-center gap-2">
+                <span className="w-4 h-px bg-primary/20"></span>
+                Optimization Required
+              </h3>
+              <div className="bg-surface-container-low/40 border border-outline-variant/10 p-5 rounded-2xl text-on-surface/80 transition-all group-hover:border-primary/20">
+                <p className="text-sm leading-relaxed">{toFix}</p>
+              </div>
             </div>
           )}
         </div>
         
-        <div className="mt-8 flex justify-center gap-4 text-sm">
-          <button onClick={handleDownload} className="bg-cyan-600 hover:bg-cyan-500 text-white px-6 py-2 rounded-full font-bold shadow-md transition-colors flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-            </svg>
-            Download Report PDF
+        {/* Actions Section */}
+        <div className="p-8 pt-0 flex flex-col items-center gap-6">
+          <button 
+            onClick={handleDownload} 
+            className="cta-gradient w-full py-4 rounded-2xl font-bold text-white shadow-[0_8px_24px_-8px_rgba(24,200,151,0.5)] transition-all hover:scale-[1.02] flex items-center justify-center gap-3 active:scale-95 uppercase tracking-widest text-xs"
+          >
+            <span className="material-symbols-outlined text-[18px]">download</span>
+            Generate Comprehensive Analysis
           </button>
-        </div>
-        <div className="mt-4 text-center text-xs text-gray-500">
-          Take a screenshot to save your verdict. Refresh to pitch again.
+          
+          <div className="flex items-center gap-4 text-[9px] font-black font-label uppercase tracking-widest text-on-surface-variant/30">
+            <span>Encrypted Ledger Saved</span>
+            <span className="w-1 h-1 bg-on-surface-variant/20 rounded-full"></span>
+            <span>Ref: PTTP-S{sessionId.slice(0,4)}</span>
+          </div>
         </div>
       </div>
     </div>

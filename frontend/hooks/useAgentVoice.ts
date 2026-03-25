@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useRef } from "react";
 
-export type AgentRole = "vc" | "enthusiastic" | "hostile" | "expert" | "competitor" | "beginner" | "judge";
+import { AgentRole } from "../types/v2_types";
+export type { AgentRole };
 
 interface VoiceConfig {
   pitch: number;
@@ -10,14 +11,19 @@ interface VoiceConfig {
   genderPref?: "male" | "female";
 }
 
-const AGENT_VOICE_CONFIGS: Record<AgentRole, VoiceConfig> = {
+const AGENT_VOICE_CONFIGS: Record<string, VoiceConfig> = {
   vc: { pitch: 0.8, rate: 0.95, genderPref: "male" },
   enthusiastic: { pitch: 1.2, rate: 1.15, genderPref: "female" },
   hostile: { pitch: 0.7, rate: 0.9, genderPref: "male" },
   expert: { pitch: 1.0, rate: 1.0, genderPref: "female" },
   competitor: { pitch: 0.9, rate: 1.05, genderPref: "female" },
   beginner: { pitch: 1.1, rate: 1.0, genderPref: "male" },
-  judge: { pitch: 0.85, rate: 0.95, genderPref: "male" }
+  judge: { pitch: 0.85, rate: 0.95, genderPref: "male" },
+  host: { pitch: 1.0, rate: 1.0, genderPref: "male" },
+  observer: { pitch: 0.9, rate: 1.1, genderPref: "female" },
+  pitcher: { pitch: 1.0, rate: 1.0, genderPref: "male" },
+  mediator: { pitch: 0.95, rate: 1.0, genderPref: "female" },
+  critic: { pitch: 0.75, rate: 0.9, genderPref: "male" }
 };
 
 // Very safe chunk length to avoid Chrome's 200-char/15-second "silent restart" bug

@@ -11,44 +11,32 @@ interface ModelSelectorProps {
 }
 
 export function ModelSelector({ currentProvider, onChange, disabled }: ModelSelectorProps) {
+  const providers: { id: Provider; label: string }[] = [
+    { id: "anthropic", label: "Claude" },
+    { id: "gemini", label: "Gemini" },
+    { id: "openai", label: "GPT" },
+    { id: "groq", label: "Groq" },
+  ];
+
   return (
-    <div className="flex space-x-2 text-sm bg-gray-800 p-1 rounded-lg">
-      <button
-        disabled={disabled}
-        onClick={() => onChange("anthropic")}
-        className={`px-4 py-2 rounded-md transition-colors ${
-          currentProvider === "anthropic" ? "bg-amber-600 text-white" : "text-gray-400 hover:text-white"
-        } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-      >
-        Claude 3.5
-      </button>
-      <button
-        disabled={disabled}
-        onClick={() => onChange("gemini")}
-        className={`px-4 py-2 rounded-md transition-colors ${
-          currentProvider === "gemini" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-white"
-        } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-      >
-        Gemini 1.5
-      </button>
-      <button
-        disabled={disabled}
-        onClick={() => onChange("openai")}
-        className={`px-4 py-2 rounded-md transition-colors ${
-          currentProvider === "openai" ? "bg-emerald-600 text-white" : "text-gray-400 hover:text-white"
-        } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-      >
-        GPT-4o
-      </button>
-      <button
-        disabled={disabled}
-        onClick={() => onChange("groq")}
-        className={`px-4 py-2 rounded-md font-semibold transition-colors ${
-          currentProvider === "groq" ? "bg-indigo-600 text-white" : "text-gray-400 hover:text-white"
-        } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-      >
-        Groq
-      </button>
-    </div>
+    <nav className="hidden md:flex items-center bg-surface-container-low rounded-full px-1 py-1 gap-1 border border-outline-variant/10">
+      {providers.map((p) => {
+        const isActive = currentProvider === p.id;
+        return (
+          <button
+            key={p.id}
+            disabled={disabled}
+            onClick={() => onChange(p.id)}
+            className={`px-4 pb-1 text-[10px] font-label uppercase tracking-widest transition-all duration-200 border-b-2 font-black ${
+              isActive
+                ? "text-primary border-primary"
+                : "text-outline hover:text-white border-transparent"
+            } ${disabled ? "opacity-30 cursor-not-allowed" : "cursor-pointer"}`}
+          >
+            {p.label}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
