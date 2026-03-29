@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Pitch to the Panel | Transcripts</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Manrope:wght@600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "error-container": "#9f0519",
+                        "tertiary-fixed": "#c0a0ff",
+                        "surface-tint": "#68ffca",
+                        "secondary-fixed": "#d8e3fb",
+                        "primary-fixed": "#68ffca",
+                        "on-tertiary-fixed-variant": "#4a00a4",
+                        "on-primary-fixed": "#004b36",
+                        "outline-variant": "#40485d",
+                        "on-secondary-container": "#c5d1e8",
+                        "on-secondary": "#475266",
+                        "secondary-dim": "#cad5ed",
+                        "on-primary-fixed-variant": "#006b4f",
+                        "secondary": "#d8e3fb",
+                        "on-tertiary": "#2b0065",
+                        "tertiary-dim": "#8a4cfc",
+                        "surface": "#060e20",
+                        "on-surface": "#dee5ff",
+                        "surface-container-highest": "#192540",
+                        "tertiary-container": "#8342f4",
+                        "primary-fixed-dim": "#58f0bd",
+                        "on-tertiary-fixed": "#200051",
+                        "on-background": "#dee5ff",
+                        "on-secondary-fixed-variant": "#515c70",
+                        "inverse-on-surface": "#4d556b",
+                        "surface-variant": "#192540",
+                        "background": "#060e20",
+                        "surface-container-high": "#141f38",
+                        "error": "#ff716c",
+                        "surface-container-lowest": "#000000",
+                        "outline": "#6d758c",
+                        "primary-dim": "#58f0bd",
+                        "on-surface-variant": "#a3aac4",
+                        "on-primary-container": "#003828",
+                        "surface-dim": "#060e20",
+                        "tertiary-fixed-dim": "#b48fff",
+                        "on-error": "#490006",
+                        "surface-container-low": "#091328",
+                        "secondary-fixed-dim": "#cad5ed",
+                        "primary-container": "#18c897",
+                        "primary": "#68ffca",
+                        "on-primary": "#005f46",
+                        "on-error-container": "#ffa8a3",
+                        "surface-container": "#0f1930",
+                        "inverse-primary": "#006c50",
+                        "on-secondary-fixed": "#354053",
+                        "secondary-container": "#3c475a",
+                        "inverse-surface": "#faf8ff",
+                        "error-dim": "#d7383b",
+                        "on-tertiary-container": "#ffffff",
+                        "surface-bright": "#1f2b49",
+                        "tertiary": "#af88ff"
+                    },
+                    fontFamily: {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .glass-panel {
+            background: rgba(25, 37, 64, 0.6);
+            backdrop-filter: blur(20px);
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #060e20;
+            color: #dee5ff;
+        }
+        h1, h2, h3, .font-headline {
+            font-family: 'Manrope', sans-serif;
+        }
+    </style>
+</head>
+<body class="h-screen flex overflow-hidden">
+<!-- SideNavBar (from JSON) -->
+<aside class="bg-[#091328] dark:bg-[#091328] h-screen w-64 docked left-0 flex flex-col h-full py-6 px-4 shadow-[0_20px_40px_rgba(0,0,0,0.4)] z-50">
+<div class="mb-10 px-2">
+<h1 class="text-xl font-bold tracking-tight text-[#68ffca]">Pitch Panel</h1>
+<p class="text-xs text-on-surface-variant font-label uppercase tracking-widest mt-1">Digital Athenaeum</p>
+</div>
+<nav class="flex-1 space-y-2">
+<div class="flex items-center px-4 py-3 rounded-xl text-slate-400 hover:text-slate-200 transition-colors hover:bg-[#141f38] transition-all duration-300 cursor-pointer scale-95 active:scale-90 duration-200">
+<span class="material-symbols-outlined mr-3" data-icon="group">group</span>
+<span class="font-label">Panel</span>
+</div>
+<!-- ACTIVE TAB: Transcripts -->
+<div class="flex items-center px-4 py-3 rounded-xl text-[#68ffca] font-bold border-r-4 border-[#68ffca] bg-gradient-to-r from-[#68ffca]/10 to-transparent transition-all duration-300 cursor-pointer">
+<span class="material-symbols-outlined mr-3" data-icon="description">description</span>
+<span class="font-label">Transcripts</span>
+</div>
+<div class="flex items-center px-4 py-3 rounded-xl text-slate-400 hover:text-slate-200 transition-colors hover:bg-[#141f38] transition-all duration-300 cursor-pointer scale-95 active:scale-90 duration-200">
+<span class="material-symbols-outlined mr-3" data-icon="auto_stories">auto_stories</span>
+<span class="font-label">Library</span>
+</div>
+<div class="flex items-center px-4 py-3 rounded-xl text-slate-400 hover:text-slate-200 transition-colors hover:bg-[#141f38] transition-all duration-300 cursor-pointer scale-95 active:scale-90 duration-200">
+<span class="material-symbols-outlined mr-3" data-icon="analytics">analytics</span>
+<span class="font-label">Analytics</span>
+</div>
+</nav>
+<div class="mt-auto px-2">
+<button class="w-full bg-gradient-to-r from-[#68ffca] to-[#18c897] text-on-primary-container py-3 rounded-full font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined">add</span>
+                New Session
+            </button>
+<div class="mt-6 flex items-center gap-3 p-2 rounded-xl bg-surface-container-low">
+<img alt="User profile" class="w-8 h-8 rounded-full" data-alt="Close up of a professional male user avatar" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAp-b425gZkkqfSrKzMv0vav1xELUmamRoWNik1D31q72PTjCT0ug8sOCl2niJ5cLpHpibFKU_s6Qn3hshn-CwBZOe4uN5zltbLMD8dcWfwKCSl2yis157bjIwT1Bpi9F6L6y-ep0hWj1UjqeD2ZcLDvYys7fWoJOneqa6bKTccJLh76ZB8QO6uGURxmTp9vuAddGiDyA49EKzxdMqN8QkLi2dCgi4ZZ1u3OCV4Ft0PFHRjB9cfbdzm1hswhHDsm99ljFQxQXDYW40"/>
+<div class="overflow-hidden">
+<p class="text-xs font-bold truncate">Alex Chen</p>
+<p class="text-[10px] text-on-surface-variant truncate">Premium Curator</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col min-w-0 bg-surface">
+<!-- TopNavBar (from JSON) -->
+<header class="flex justify-between items-center w-full px-8 h-16 sticky top-0 bg-[#060e20]/60 backdrop-blur-xl z-40">
+<div class="flex items-center gap-8">
+<span class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-[#68ffca] to-[#18c897]">Pitch to the Panel</span>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-slate-400 font-medium hover:text-[#68ffca] transition-colors" href="#">Claude</a>
+<a class="text-slate-400 font-medium hover:text-[#68ffca] transition-colors" href="#">Gemini</a>
+<a class="text-slate-400 font-medium hover:text-[#68ffca] transition-colors" href="#">GPT-4</a>
+</nav>
+</div>
+<div class="flex items-center gap-6">
+<div class="relative flex items-center bg-surface-container-low px-4 py-1.5 rounded-full ring-1 ring-outline-variant/15">
+<span class="material-symbols-outlined text-on-surface-variant text-sm mr-2">search</span>
+<input class="bg-transparent border-none text-sm focus:ring-0 placeholder:text-on-surface-variant w-48" placeholder="Global search..." type="text"/>
+</div>
+<div class="flex items-center gap-4 text-on-surface-variant">
+<span class="material-symbols-outlined cursor-pointer hover:text-primary transition-colors">notifications</span>
+<span class="material-symbols-outlined cursor-pointer hover:text-primary transition-colors">settings</span>
+</div>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<!-- Sessions Sidebar List -->
+<section class="w-80 flex flex-col bg-surface-container-low h-full shadow-inner">
+<div class="p-6">
+<h2 class="font-headline text-lg font-bold mb-4">Past Sessions</h2>
+<div class="relative flex items-center bg-surface-container px-3 py-2 rounded-lg ring-1 ring-outline-variant/10 mb-6">
+<span class="material-symbols-outlined text-on-surface-variant text-base mr-2">search</span>
+<input class="bg-transparent border-none text-xs focus:ring-0 placeholder:text-on-surface-variant w-full" placeholder="Search sessions..." type="text"/>
+</div>
+<div class="space-y-4 overflow-y-auto max-h-[calc(100vh-250px)] pr-2 custom-scrollbar">
+<!-- Active Session -->
+<div class="p-4 rounded-xl bg-surface-container-high ring-1 ring-primary/20 border-l-4 border-primary cursor-pointer transition-all">
+<div class="flex justify-between items-start mb-2">
+<span class="text-[10px] font-label font-bold text-primary uppercase">Oct 24, 2023</span>
+<span class="text-[10px] text-on-surface-variant">14:22</span>
+</div>
+<h3 class="font-bold text-sm text-on-surface mb-1 truncate">Venture Capital Strategy</h3>
+<p class="text-[11px] text-on-surface-variant line-clamp-2">Discussion on Series A funding rounds and equity distribution models for SaaS.</p>
+<div class="mt-3 flex -space-x-2">
+<div class="w-5 h-5 rounded-full bg-primary border border-background flex items-center justify-center text-[8px] font-bold text-on-primary">CL</div>
+<div class="w-5 h-5 rounded-full bg-tertiary border border-background flex items-center justify-center text-[8px] font-bold text-on-tertiary">GE</div>
+<div class="w-5 h-5 rounded-full bg-secondary-container border border-background flex items-center justify-center text-[8px] font-bold text-on-secondary">GP</div>
+</div>
+</div>
+<!-- Session 2 -->
+<div class="p-4 rounded-xl hover:bg-surface-container transition-all cursor-pointer group">
+<div class="flex justify-between items-start mb-2">
+<span class="text-[10px] font-label font-bold text-on-surface-variant uppercase">Oct 22, 2023</span>
+</div>
+<h3 class="font-bold text-sm text-on-surface mb-1 truncate group-hover:text-primary transition-colors">Brand Identity Audit</h3>
+<p class="text-[11px] text-on-surface-variant line-clamp-2">Evaluating visual language and tone of voice for the Digital Athenaeum.</p>
+</div>
+<!-- Session 3 -->
+<div class="p-4 rounded-xl hover:bg-surface-container transition-all cursor-pointer group">
+<div class="flex justify-between items-start mb-2">
+<span class="text-[10px] font-label font-bold text-on-surface-variant uppercase">Oct 19, 2023</span>
+</div>
+<h3 class="font-bold text-sm text-on-surface mb-1 truncate group-hover:text-primary transition-colors">Quantum Compute Ethics</h3>
+<p class="text-[11px] text-on-surface-variant line-clamp-2">A deep dive into the ethical implications of post-quantum cryptography.</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Main Transcript Area -->
+<section class="flex-1 flex flex-col bg-surface overflow-hidden relative">
+<!-- Transcript Header -->
+<div class="p-8 pb-4 flex justify-between items-end bg-gradient-to-b from-surface to-transparent">
+<div>
+<div class="flex items-center gap-2 mb-2">
+<span class="px-2 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider">Research Active</span>
+<span class="text-on-surface-variant text-sm">•</span>
+<span class="text-on-surface-variant text-sm">Session ID: 8821-XP</span>
+</div>
+<h2 class="text-3xl font-headline font-extrabold text-on-surface">Venture Capital Strategy</h2>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex bg-surface-container-high rounded-full p-1">
+<button class="px-4 py-2 text-xs font-bold hover:bg-surface-container rounded-full transition-all flex items-center gap-2">
+<span class="material-symbols-outlined text-sm" data-icon="picture_as_pdf">picture_as_pdf</span> PDF
+                            </button>
+<button class="px-4 py-2 text-xs font-bold hover:bg-surface-container rounded-full transition-all flex items-center gap-2">
+<span class="material-symbols-outlined text-sm" data-icon="description">description</span> TXT
+                            </button>
+</div>
+<button class="bg-primary text-on-primary-container px-5 py-2.5 rounded-full font-bold text-sm hover:shadow-[0_0_15px_rgba(104,255,202,0.3)] transition-all">
+                            Share Session
+                        </button>
+</div>
+</div>
+<!-- Messages Container -->
+<div class="flex-1 overflow-y-auto px-8 pb-20 pt-4 space-y-12 custom-scrollbar">
+<!-- Message 1: User -->
+<div class="flex gap-6 max-w-4xl mx-auto">
+<div class="flex-shrink-0 w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center ring-2 ring-outline-variant/20">
+<span class="material-symbols-outlined text-primary text-xl">person</span>
+</div>
+<div class="flex-1">
+<div class="flex items-center gap-3 mb-2">
+<span class="font-headline font-bold text-on-surface">Alex Chen</span>
+<span class="text-[10px] font-label text-on-surface-variant">14:22 PM</span>
+</div>
+<div class="text-on-surface leading-relaxed body-md">
+                                How should we prioritize equity distribution among the founding team versus the initial pool for early employees in a Series A context?
+                            </div>
+</div>
+</div>
+<!-- Message 2: Claude (Agent) -->
+<div class="flex gap-6 max-w-4xl mx-auto">
+<div class="flex-shrink-0 relative">
+<div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center shadow-[0_0_12px_rgba(104,255,202,0.2)]">
+<span class="material-symbols-outlined text-on-primary text-xl" style="font-variation-settings: 'FILL' 1;">smart_toy</span>
+</div>
+<div class="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-background flex items-center justify-center">
+<div class="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+</div>
+</div>
+<div class="flex-1 glass-panel p-6 rounded-2xl rounded-tl-none ring-1 ring-primary/10">
+<div class="flex items-center gap-3 mb-4">
+<span class="font-headline font-bold text-primary">Claude 3.5 Sonnet</span>
+<span class="px-2 py-0.5 rounded bg-primary/20 text-primary text-[8px] font-bold uppercase tracking-widest">Lead Strategist</span>
+<span class="text-[10px] font-label text-on-surface-variant">14:23 PM</span>
+</div>
+<div class="text-on-surface leading-relaxed space-y-4">
+<p>Standard models typically suggest a 10-15% option pool for employees at the Series A stage. For the founding team, the goal is long-term incentive alignment. </p>
+<p>I recommend a 4-year vesting schedule with a 1-year cliff. This ensures that the equity remains concentrated among those who contribute to the critical growth phase following the capital injection.</p>
+</div>
+<div class="mt-4 pt-4 border-t border-outline-variant/10 flex gap-4">
+<button class="text-[10px] font-bold text-on-surface-variant hover:text-primary transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">content_copy</span> Copy
+                                </button>
+<button class="text-[10px] font-bold text-on-surface-variant hover:text-primary transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">bookmark</span> Save
+                                </button>
+</div>
+</div>
+</div>
+<!-- Message 3: GPT-4 (Agent) -->
+<div class="flex gap-6 max-w-4xl mx-auto">
+<div class="flex-shrink-0">
+<div class="w-10 h-10 rounded-full bg-tertiary flex items-center justify-center">
+<span class="material-symbols-outlined text-on-tertiary text-xl" style="font-variation-settings: 'FILL' 1;">neurology</span>
+</div>
+</div>
+<div class="flex-1 glass-panel p-6 rounded-2xl rounded-tl-none ring-1 ring-tertiary/10">
+<div class="flex items-center gap-3 mb-4">
+<span class="font-headline font-bold text-tertiary">GPT-4 Omni</span>
+<span class="px-2 py-0.5 rounded bg-tertiary/20 text-tertiary text-[8px] font-bold uppercase tracking-widest">Economic Advisor</span>
+<span class="text-[10px] font-label text-on-surface-variant">14:24 PM</span>
+</div>
+<div class="text-on-surface leading-relaxed">
+                                Expanding on Claude's point, it's also worth considering the "post-money" vs "pre-money" calculation of that pool. Investors will often push for a "pool shuffle"—creating the new option pool out of the pre-money valuation to avoid diluting themselves. You must negotiate this carefully to ensure founder ownership doesn't drop below 50% post-Series A.
+                            </div>
+</div>
+</div>
+<!-- Message 4: Gemini (Agent) -->
+<div class="flex gap-6 max-w-4xl mx-auto">
+<div class="flex-shrink-0">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center">
+<span class="material-symbols-outlined text-secondary text-xl" style="font-variation-settings: 'FILL' 1;">query_stats</span>
+</div>
+</div>
+<div class="flex-1 glass-panel p-6 rounded-2xl rounded-tl-none ring-1 ring-secondary/10">
+<div class="flex items-center gap-3 mb-4">
+<span class="font-headline font-bold text-secondary">Gemini 1.5 Pro</span>
+<span class="px-2 py-0.5 rounded bg-secondary/20 text-secondary text-[8px] font-bold uppercase tracking-widest">Market Analyst</span>
+<span class="text-[10px] font-label text-on-surface-variant">14:25 PM</span>
+</div>
+<div class="text-on-surface leading-relaxed">
+<p>I've pulled recent data from Carta and Pitchbook. In the current Q3 market, we are seeing a shift toward slightly larger option pools (18%) to attract talent in a competitive AI-focused labor market. However, "Top-Up" grants are becoming more common than massive upfront allocations.</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Footer Search/Input Bar -->
+<div class="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-surface to-transparent">
+<div class="max-w-4xl mx-auto relative group">
+<div class="absolute inset-0 bg-primary/5 blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<div class="relative bg-surface-container-high ring-1 ring-outline-variant/20 rounded-full px-6 py-4 flex items-center gap-4">
+<span class="material-symbols-outlined text-primary">search</span>
+<input class="bg-transparent border-none flex-1 focus:ring-0 text-on-surface placeholder:text-on-surface-variant" placeholder="Search this transcript..." type="text"/>
+<div class="flex gap-2">
+<button class="w-10 h-10 rounded-full hover:bg-surface-container flex items-center justify-center transition-colors">
+<span class="material-symbols-outlined text-on-surface-variant">keyboard_arrow_up</span>
+</button>
+<button class="w-10 h-10 rounded-full hover:bg-surface-container flex items-center justify-center transition-colors">
+<span class="material-symbols-outlined text-on-surface-variant">keyboard_arrow_down</span>
+</button>
+<div class="w-px h-6 bg-outline-variant/20 mx-1 self-center"></div>
+<button class="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center hover:bg-primary hover:text-on-primary transition-all">
+<span class="material-symbols-outlined">filter_list</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<style>
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #192540;
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #40485d;
+        }
+    </style>
+</body></html>

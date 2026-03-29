@@ -11,61 +11,66 @@ interface SidebarProps {
 export function Sidebar({ onNewPitch, onViewChange, currentView = "panel" }: SidebarProps) {
   const navItems = [
     { id: "panel", label: "Panel", icon: "group" },
-    { id: "transcripts", label: "Transcripts", icon: "description" },
-    { id: "library", label: "Library", icon: "auto_stories" },
-    { id: "analytics", label: "Analytics", icon: "analytics" },
+    { id: "transcripts", label: "Transcripts", icon: "chat" },
+    { id: "library", label: "Library", icon: "book" },
+    { id: "analytics", label: "Analytics", icon: "query_stats" },
   ];
 
   return (
-    <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-64 flex-col bg-[#091328] shadow-[0_20px_40px_rgba(0,0,0,0.4)] z-50 py-6 px-4">
-      <div className="mb-10 px-2">
-        <h1 className="text-xl font-headline font-extrabold tracking-tight text-[#68ffca]">Pitch Panel</h1>
-        <p className="text-[10px] text-on-surface-variant font-label font-black uppercase tracking-widest mt-1 opacity-60">Digital Athenaeum</p>
+    <aside className="h-full w-72 flex flex-col z-40 bg-slate-50/50 border-r border-slate-200/40 font-headline antialiased">
+      <div className="p-8 flex items-center gap-3">
+        <div className="w-10 h-10 bg-[#006948] rounded-xl flex items-center justify-center shadow-lg shadow-emerald-900/20">
+          <span className="material-symbols-outlined text-white text-2xl">gavel</span>
+        </div>
+        <div>
+          <h1 className="text-lg font-bold text-slate-900 leading-none">Digital Athenaeum</h1>
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">v2.4.0-ALPHA</span>
+        </div>
       </div>
-
-      <nav className="flex-1 space-y-2">
+      
+      <nav className="flex flex-col gap-2 px-4 flex-1 mt-8">
         {navItems.map((item) => {
           const isActive = currentView === item.id;
           return (
-            <div
+            <button
               key={item.id}
               onClick={() => onViewChange(item.id)}
-              className={`flex items-center px-4 py-3 rounded-xl transition-all duration-300 cursor-pointer ${
+              className={`flex items-center gap-4 px-6 py-4 rounded-2xl transition-all duration-200 group ${
                 isActive
-                  ? "text-[#68ffca] font-bold border-r-4 border-[#68ffca] bg-gradient-to-r from-[#68ffca]/10 to-transparent"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-[#141f38] scale-95 active:scale-90"
+                  ? "bg-emerald-50 text-[#006948] shadow-sm"
+                  : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
               }`}
             >
-              <span className="material-symbols-outlined mr-3 text-[20px]">{item.icon}</span>
-              <span className="font-label text-sm uppercase tracking-widest font-black leading-none">{item.label}</span>
-            </div>
+              <span 
+                className={`material-symbols-outlined text-2xl ${isActive ? 'fill-1' : ''}`}
+                style={{ fontVariationSettings: isActive ? "'FILL' 1" : "" }}
+              >
+                {item.icon}
+              </span>
+              <span className="text-sm font-bold tracking-tight">{item.label}</span>
+            </button>
           );
         })}
       </nav>
 
-      <div className="mt-auto px-2 pt-6">
-        <button
+      <div className="p-6 mt-auto space-y-6">
+        <button 
           onClick={onNewPitch}
-          className="w-full bg-gradient-to-r from-[#68ffca] to-[#18c897] text-[#003828] py-4 rounded-full font-black text-xs uppercase tracking-[0.2em] flex items-center justify-center gap-2 hover:opacity-90 transition-all shadow-lg active:scale-95 mb-6"
+          className="w-full py-4 rounded-full bg-[#006948] text-white flex items-center justify-center gap-3 shadow-xl shadow-emerald-900/10 hover:scale-[1.02] active:scale-[0.98] transition-all"
         >
-          <span className="material-symbols-outlined text-sm">add</span>
-          New Session
+          <span className="material-symbols-outlined text-xl">add</span>
+          <span className="text-sm font-bold">New Pitch</span>
         </button>
-
-        <div className="flex items-center gap-3 p-3 rounded-2xl bg-surface-container-low/50 border border-white/5 group hover:bg-surface-container-low transition-colors cursor-pointer">
-          <div className="relative">
-             <img 
-               alt="User profile" 
-               className="w-10 h-10 rounded-full object-cover border border-primary/20" 
-               src="https://lh3.googleusercontent.com/aida-public/AB6AXuAp-b425gZkkqfSrKzMv0vav1xELUmamRoWNik1D31q72PTjCT0ug8sOCl2niJ5cLpHpibFKU_s6Qn3hshn-CwBZOe4uN5zltbLMD8dcWfwKCSl2yis157bjIwT1Bpi9F6L6y-ep0hWj1UjqeD2ZcLDvYys7fWoJOneqa6bKTccJLh76ZB8QO6uGURxmTp9vuAddGiDyA49EKzxdMqN8QkLi2dCgi4ZZ1u3OCV4Ft0PFHRjB9cfbdzm1hswhHDsm99ljFQxQXDYW40" 
-             />
-             <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border-2 border-[#091328]"></div>
-          </div>
-          <div className="overflow-hidden">
-            <p className="text-xs font-black text-white truncate font-manrope">Alex Chen</p>
-            <p className="text-[9px] text-on-surface-variant font-black uppercase tracking-wider truncate opacity-50">Premium Curator</p>
-          </div>
-          <span className="material-symbols-outlined ml-auto text-on-surface-variant group-hover:text-white transition-colors text-sm">more_vert</span>
+        
+        <div className="flex flex-col gap-4 px-6 pb-4">
+           <button className="flex items-center gap-4 text-slate-400 hover:text-slate-600 transition-colors">
+              <span className="material-symbols-outlined text-2xl">help</span>
+              <span className="text-sm font-bold">Support</span>
+           </button>
+           <button className="flex items-center gap-4 text-slate-400 hover:text-slate-600 transition-colors">
+              <span className="material-symbols-outlined text-2xl">person</span>
+              <span className="text-sm font-bold">Account</span>
+           </button>
         </div>
       </div>
     </aside>

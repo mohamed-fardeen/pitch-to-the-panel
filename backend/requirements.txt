@@ -6,3 +6,5 @@ google-generativeai
 openai
 pydantic
 sse-starlette
+langgraph>=0.2.0
+langchain-core>=0.2.0

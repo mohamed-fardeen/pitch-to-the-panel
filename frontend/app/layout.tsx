@@ -23,7 +23,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark scroll-smooth">
+    <html lang="en" className="light scroll-smooth">
       <head>
         <link
           rel="stylesheet"
@@ -31,7 +31,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${inter.variable} ${manrope.variable} antialiased bg-background text-on-background font-body min-h-screen selection:bg-primary/30 overflow-x-hidden`}
+        className={`${inter.variable} ${manrope.variable} antialiased bg-surface text-on-surface font-body min-h-screen selection:bg-primary/20 overflow-x-hidden`}
       >
         {children}
       </body>

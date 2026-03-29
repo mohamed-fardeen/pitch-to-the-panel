@@ -8,98 +8,67 @@ interface AgentCardProps {
   name: string;
   role: string | AgentRole;
   status: AgentStatus;
-  text: string;
+  text?: string;
   avatarUrl?: string;
-  isHost?: boolean;
   isChallenged?: boolean;
 }
 
-export function AgentCard({
-  id,
-  name,
-  role,
-  status,
-  text,
-  avatarUrl,
-  isHost,
-  isChallenged
-}: AgentCardProps) {
+export function AgentCard({ id, name, role, status, text, avatarUrl, isChallenged }: AgentCardProps) {
   const isSpeaking = status === "speaking";
 
   return (
     <div 
-      id={`agent-${id}`}
-      className={`relative glass-card ghost-border rounded-3xl overflow-hidden transition-all duration-700 flex flex-col h-full min-h-[300px] border-white/5 group ${
-        isSpeaking ? "ring-2 ring-primary/30 shadow-[0_40px_80px_-20px_rgba(24,200,151,0.3)] scale-[1.02] z-20" : "shadow-2xl opacity-80"
-      } ${
-        isChallenged ? "border-rose-500/50 ring-2 ring-rose-500/10" : ""
-      } bg-gradient-to-br from-white/[0.02] to-transparent`}
+      className={`relative flex flex-col items-center p-10 rounded-[2.5rem] transition-all duration-700 border ${
+        isSpeaking 
+          ? "bg-emerald-50/40 border-emerald-200 shadow-[0_20px_50px_rgba(0,105,72,0.1)] scale-[1.02]" 
+          : isChallenged
+          ? "bg-rose-50/40 border-rose-200 shadow-[0_20px_50px_rgba(225,29,72,0.1)]"
+          : "bg-white border-slate-100 shadow-sm hover:shadow-lg hover:border-slate-200"
+      }`}
     >
-      {/* Background Decor */}
-      {isSpeaking && (
-        <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 blur-[60px] -mr-16 -mt-16 animate-pulse"></div>
-      )}
+      {/* Speaking/Challenged Badge */}
+      <div className="absolute top-8 left-0 right-0 flex justify-center px-6 pointer-events-none">
+         {isSpeaking ? (
+            <div className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-500 rounded-full shadow-lg shadow-emerald-500/20 duration-300">
+               <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></div>
+               <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Speaking</span>
+            </div>
+         ) : isChallenged && (
+            <div className="flex items-center gap-1.5 px-4 py-1.5 bg-rose-500 rounded-full shadow-lg shadow-rose-500/20 duration-300">
+               <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
+               <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Challenged</span>
+            </div>
+         )}
+      </div>
 
-      {/* Header Area */}
-      <div className={`p-6 border-b border-white/5 flex items-center gap-5 transition-all ${
-        isSpeaking ? "bg-primary/5 border-primary/10" : "bg-surface-container-low/20"
-      }`}>
-        {/* Avatar Sidebar */}
-        <div className="relative">
-          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ring-1 transition-all duration-500 ${
-            isSpeaking 
-              ? 'bg-primary border-primary/40 text-[#003828] shadow-[0_0_20px_rgba(104,255,202,0.4)] rotate-3' 
-              : 'bg-surface-container-highest border-white/10 text-on-surface-variant'
-          }`}>
-             <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: isSpeaking ? "'FILL' 1" : "'FILL' 0" }}>
-               {isHost ? 'bolt' : id.includes('gemini') ? 'query_stats' : id.includes('gpt') ? 'neurology' : 'smart_toy'}
-             </span>
-          </div>
-          {isSpeaking && (
-            <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[#060e20] flex items-center justify-center border border-white/10 shadow-xl overflow-hidden">
-               <div className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse"></div>
+      <div className="relative mt-8 mb-6">
+        <div className={`w-32 h-32 rounded-3xl overflow-hidden border-2 ${isSpeaking ? 'border-emerald-500' : 'border-slate-100'} shadow-2xl shadow-slate-200/40`}>
+          {avatarUrl ? (
+            <img src={avatarUrl} alt={name} className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full bg-slate-50 flex items-center justify-center">
+              <span className="material-symbols-outlined text-4xl text-slate-200">person</span>
             </div>
           )}
         </div>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 mb-1">
-            <h4 className="font-manrope font-black text-white truncate text-base uppercase tracking-tight">{name}</h4>
-            {isHost && (
-              <span className="text-[8px] font-black font-label uppercase tracking-widest bg-primary/10 text-primary border border-primary/20 px-2 py-1 rounded-full leading-none shadow-lg">
-                Host
-              </span>
-            )}
+        {isSpeaking && (
+          <div className="absolute -bottom-2 -right-2 w-10 h-10 bg-emerald-500 rounded-full border-4 border-white flex items-center justify-center shadow-xl">
+             <span className="material-symbols-outlined text-white text-xs" style={{ fontVariationSettings: "'FILL' 1" }}>mic</span>
           </div>
-          <p className="text-[10px] font-black font-label uppercase tracking-widest text-[#68ffca] opacity-40">
-            {role.replace("_", " ")}
-          </p>
-        </div>
+        )}
       </div>
 
-      {/* Text/Content Area */}
-      <div className="flex-1 p-8 overflow-y-auto custom-scrollbar relative">
-        <div className={`text-base leading-[1.8] transition-all duration-500 ${
-          isSpeaking ? "text-white font-medium" : "text-on-surface-variant/80 font-normal italic italic"
-        }`}>
-          {text ? (
-             text.split('\n\n').map((p, i) => <p key={i} className={i > 0 ? "mt-4" : ""}>{p}</p>)
-          ) : (
-            <span className="opacity-20 uppercase tracking-[0.2em] text-[10px] font-black">Waiting for turn...</span>
-          )}
-          {isSpeaking && (
-            <span className="inline-block w-1.5 h-1.5 ml-2 bg-primary rounded-full animate-bounce align-middle shadow-[0_0_5px_#68ffca]"></span>
-          )}
-        </div>
+      <div className="text-center space-y-2 mb-8">
+        <h3 className="text-2xl font-black text-slate-800 tracking-tight leading-none">{name}</h3>
+        <p className={`text-[11px] font-extrabold uppercase tracking-[0.2em] px-3 py-1 rounded-full border border-current opacity-40 mx-auto w-fit ${isSpeaking ? 'text-emerald-600' : 'text-slate-400'}`}>
+          {typeof role === 'string' ? role : role}
+        </p>
       </div>
 
-      {/* Footer Branding */}
-      <div className="px-6 py-4 border-t border-white/5 flex justify-between items-center opacity-20 text-[8px] font-black uppercase tracking-[0.3em]">
-        <div className="flex items-center gap-2">
-           <span className="w-1 h-1 bg-primary rounded-full"></span>
-           <span>Unit-0{id.charCodeAt(0) % 9}</span>
-        </div>
-        <span>Athenaeum Safe</span>
+      <div className="w-full min-h-[80px] flex items-center justify-center">
+         <p className="text-[15px] text-slate-500 font-medium leading-relaxed italic text-center opacity-90 line-clamp-3">
+           {text ? `"${text}"` : "Waiting for the right moment to interject..."}
+         </p>
       </div>
     </div>
   );

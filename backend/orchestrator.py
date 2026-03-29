@@ -3,16 +3,22 @@ import asyncio
 import os
 from typing import AsyncGenerator, Tuple, Dict, List, Optional
 from prompts import (
-    HOST_PAIR_SELECTION_PROMPT,
-    CONVERSATION_ORCHESTRATOR_PROMPT,
-    HOST_UTTERANCE_PROMPT,
-    OBSERVER_UTTERANCE_PROMPT,
-    PITCHER_INTERRUPT_ACK_PROMPT,
-    JUDGE_CONVERSATION_PROMPT,
+    INTERVIEWER_SYSTEM_PROMPT,
+    PERSONA_FOCUS_GROUP_PROMPT,
+    CONFLICT_ROUTER_PROMPT,
+    DEBATE_ENGINE_PROMPT,
+    HALLUCINATION_GUARD_PROMPT,
+    META_ANALYST_PROMPT,
+    OCEAN_PROFILES,
     DIFFICULTY_MODIFIERS,
-    PERSONA_ANCHORS
+    PERSONA_ANCHORS,
+    JUDGE_CONVERSATION_PROMPT
 )
 from services.llm import llm_provider
+from graph import FocusGroupState, build_focus_group_graph
+
+sessions: dict[str, dict] = {}
+
 # Feature 4: Firecrawl MCP Setup
 try:
     from firecrawl import FirecrawlApp
@@ -103,8 +109,8 @@ async def generate_3d_from_sketch(image_url: str) -> dict:
 
 # The standard agents
 PANEL_AGENTS_STANDARD = ["vc", "enthusiastic", "hostile", "expert", "competitor", "beginner"]
-PANEL_AGENTS_DESIGN = ["vc", "enthusiastic", "hostile", "expert", "competitor", "design_critic"]
-PANEL_AGENTS_NON_TECH = ["vc", "enthusiastic", "hostile", "expert", "competitor", "suresh"]
+PANEL_AGENTS_DESIGN = ["design_critic", "dr_iyer_design", "meera_design", "expert", "vc"]
+PANEL_AGENTS_NON_TECH = ["suresh", "hostile", "beginner", "vc", "enthusiastic"]
 
 async def generate_radar_chart_image(scores: dict) -> str:
     try:
@@ -201,703 +207,387 @@ def build_conversation_context(session: dict) -> str:
             lines.append(f"Pitcher (Interruption): {content}")
         elif t == "interrupt_ack":
             lines.append(f"{name} (Acknowledging): {content}")
+        elif t == "interviewer_question":
+            lines.append(f"{name} asked: {content}")
+        elif t == "persona_response":
+            lines.append(f"{name}: {content}")
+        elif t == "debate_interjection":
+            lines.append(f"{name} interjected: {content}")
+        elif t == "interviewer_invitation":
+            lines.append(f"{name} invited: {content}")
+        elif t == "pitcher_response":
+            lines.append(f"Pitcher: {content}")
+        elif t == "debate_question":
+            directed = turn.get("directed_at_name", "Panel")
+            lines.append(f"Debate Engine → {directed}: {content}")
+        elif t == "pitcher_input":
+            lines.append(f"Pitcher: {content}")
+        elif t == "pitcher_message":
+            lines.append(f"Pitcher (jumped in): {content}")
     
     return "\n".join(lines)
 
-async def select_host_pair(
-    session: dict, 
-    provider: str
-) -> Tuple[str, str]:
-    """
-    Select the two best host agents for this pitch.
-    Returns (host_a_id, host_b_id).
-    host_a is the more skeptical host.
-    """
-    active_panel = session["active_panel"]
-    panel_names = ", ".join([
-        f"{aid} ({AGENTS_CONFIG[aid]['name']})" 
-        for aid in active_panel
+# --- V3 LANGGRAPH NODES ---
+
+async def interviewer_node(state: FocusGroupState):
+    """Lead Interviewer directs the focus group."""
+    prompt = INTERVIEWER_SYSTEM_PROMPT
+    
+    # Identify which personas haven't spoken much or have specific biases
+    transcript = build_conversation_context({"conversation": state["conversation"]})
+    
+    # Format difficulty instruction
+    difficulty_instruction = DIFFICULTY_MODIFIERS.get(
+        state["difficulty"], DIFFICULTY_MODIFIERS["standard"]
+    )["question"]
+    
+    # NEW: Pass active panelists to the interviewer so it doesn't hallucinate names
+    panelists_info = "\n".join([
+        f"- {AGENTS_CONFIG[pid]['name']} ({AGENTS_CONFIG[pid]['role']})"
+        for pid in state["domain"].get("active_panel", ["vc"])
     ])
     
-    prompt = HOST_PAIR_SELECTION_PROMPT.format(
-        active_panel_names=panel_names,
-        domain=session.get("domain", {}).get(
-            "sub_domain", "general"
-        ),
-        pitch_summary=session["pitch_summary"]
+    user_input = f"PITCH SUMMARY:\n{state['pitch_summary']}\n\nACTIVE PANELISTS:\n{panelists_info}\n\nCONVERSATION SO FAR:\n{transcript}\n\nDifficulty: {difficulty_instruction}"
+    
+    response = await llm_provider.generate_response(
+        prompt, user_input, state["provider"], stream=False
+    )
+    
+    # Parse directed_at and question
+    directed_at = "vc" # Default
+    question = response
+    research_note = ""
+    
+    if "Directed at:" in response:
+        try:
+            directed_at_raw = response.split("Directed at:")[1].split("\n")[0].strip().lower()
+            # Match with persona IDs
+            for pid in state["domain"].get("active_panel", ["vc"]):
+                if pid in directed_at_raw or AGENTS_CONFIG[pid]["name"].lower() in directed_at_raw:
+                    directed_at = pid
+                    break
+            question = response.split("Question:")[1].split("Researcher note:")[0].strip()
+            research_note = response.split("Researcher note:")[1].strip()
+        except:
+            pass
+
+    new_turn = {
+        "type": "interviewer_question",
+        "agent_id": "interviewer",
+        "agent_name": AGENTS_CONFIG["interviewer"]["name"],
+        "content": question,
+        "research_note": research_note,
+        "directed_at": directed_at
+    }
+    
+    return {
+        "conversation": [new_turn],
+        "current_question": question,
+        "directed_at": directed_at,
+        "turn_count": state["turn_count"] + 1,
+        "should_invite_pitcher": (state["turn_count"] + 1) % 4 == 0
+    }
+
+async def persona_response_node(state: FocusGroupState):
+    """A persona responds to the interviewer or another persona."""
+    agent_id = state["directed_at"]
+    agent_config = AGENTS_CONFIG.get(agent_id, AGENTS_CONFIG["vc"])
+    persona_anchor = PERSONA_ANCHORS.get(agent_id, "")
+    ocean = OCEAN_PROFILES.get(agent_id, OCEAN_PROFILES["vc"])
+    
+    prompt = PERSONA_FOCUS_GROUP_PROMPT.format(
+        persona_anchor=persona_anchor,
+        openness=ocean["openness"],
+        conscientiousness=ocean["conscientiousness"],
+        extraversion=ocean["extraversion"],
+        agreeableness=ocean["agreeableness"],
+        neuroticism=ocean["neuroticism"],
+        core_bias=ocean["core_bias"],
+        hidden_objection=ocean["hidden_objection"],
+        episodic_memory=ocean["episodic_memory"],
+        pitch_summary=state["pitch_summary"],
+        question=state["current_question"],
+        conversation_so_far=build_conversation_context({"conversation": state["conversation"]}),
+        difficulty_instruction=DIFFICULTY_MODIFIERS.get(state["difficulty"], DIFFICULTY_MODIFIERS["standard"])["reaction"]
+    )
+    
+    response = await llm_provider.generate_response(
+        "Respond as the persona.", prompt, state["provider"], stream=False
+    )
+    
+    new_turn = {
+        "type": "persona_response",
+        "agent_id": agent_id,
+        "agent_name": agent_config["name"],
+        "content": response
+    }
+    
+    return {
+        "conversation": [new_turn],
+        "last_two_responses": (state["last_two_responses"] + [new_turn])[-2:]
+    }
+
+async def conflict_router_node(state: FocusGroupState):
+    """Analyzes recent responses for conflict."""
+    if len(state["last_two_responses"]) < 2:
+        return {"conflict_detected": False}
+        
+    prompt = CONFLICT_ROUTER_PROMPT.format(
+        response_a_agent=state["last_two_responses"][0]["agent_name"],
+        response_a=state["last_two_responses"][0]["content"],
+        response_b_agent=state["last_two_responses"][1]["agent_name"],
+        response_b=state["last_two_responses"][1]["content"]
     )
     
     try:
         raw = await llm_provider.generate_response(
-            "Select two host agents. Output only valid JSON.",
-            prompt,
-            provider,
-            stream=False
+            "Analyze conflict. JSON only.", prompt, state["provider"], stream=False
         )
         start = raw.find("{")
         end = raw.rfind("}") + 1
         result = json.loads(raw[start:end])
-        host_a = result.get("host_a", active_panel[0])
-        host_b = result.get("host_b", active_panel[1])
-        # Validate both are in active panel
-        if host_a not in active_panel:
-            host_a = active_panel[0]
-        if host_b not in active_panel:
-            host_b = active_panel[1]
-        if host_a == host_b:
-            host_b = active_panel[1] if host_a != active_panel[1] \
-                     else active_panel[2]
-        return host_a, host_b
-    except Exception:
-        # Fallback: vc as host_a, hostile as host_b
-        # (most contrasting pair by default)
-        fallbacks = [a for a in ["vc", "hostile", "expert",
-                                  "enthusiastic", "competitor",
-                                  "beginner"] 
-                     if a in active_panel]
-        return fallbacks[0], fallbacks[1]
+        
+        return {
+            "conflict_detected": result.get("conflict_detected", False),
+            "conflict_topic": result.get("conflict_topic"),
+            "debater_a": result.get("recommended_debaters", [None, None])[0],
+            "debater_b": result.get("recommended_debaters", [None, None])[1]
+        }
+    except:
+        return {"conflict_detected": False}
 
-async def get_next_orchestration_decision(
-    session: dict,
-    provider: str,
-    difficulty: str = "standard"
-) -> dict:
-    """
-    Ask the orchestrator what happens next in the 
-    conversation. Returns a decision dict.
-    """
-    host_a_id = session["host_a"]
-    host_b_id = session["host_b"]
-    observers = [
-        aid for aid in session["active_panel"]
-        if aid not in [host_a_id, host_b_id]
-        and aid not in session.get("called_observers", [])
-    ]
-    observer_list = "\n".join([
-        f"- {aid}: {AGENTS_CONFIG[aid]['name']} "
-        f"({AGENTS_CONFIG[aid]['role']})"
-        for aid in observers
-    ]) or "None remaining"
-
-    difficulty_instruction = DIFFICULTY_MODIFIERS.get(
-        difficulty, DIFFICULTY_MODIFIERS["standard"]
-    )["question"]
-
-    prompt = CONVERSATION_ORCHESTRATOR_PROMPT.format(
-        host_a_id=host_a_id,
-        host_a_name=AGENTS_CONFIG[host_a_id]["name"],
-        host_a_role=AGENTS_CONFIG[host_a_id]["role"],
-        host_b_id=host_b_id,
-        host_b_name=AGENTS_CONFIG[host_b_id]["name"],
-        host_b_role=AGENTS_CONFIG[host_b_id]["role"],
-        observer_list=observer_list,
-        pitch_summary=session["pitch_summary"],
-        conversation_so_far=build_conversation_context(session),
-        exchange_count=session.get("exchange_count", 0),
-        pitcher_intervention_count=session.get(
-            "pitcher_intervention_count", 0
-        ),
-        difficulty_instruction=difficulty_instruction
+async def debate_engine_node(state: FocusGroupState):
+    """Pits two personas against each other."""
+    debater_a_id = state["debater_a"] or "vc"
+    debater_b_id = state["debater_b"] or "hostile"
+    
+    # Get their previous positions from last_two_responses
+    # But for robustness, just use the IDs and topic
+    
+    prompt = DEBATE_ENGINE_PROMPT.format(
+        persona_a_name=AGENTS_CONFIG.get(debater_a_id, {"name": debater_a_id})["name"],
+        persona_a_response="[Previous point]",
+        persona_b_name=AGENTS_CONFIG.get(debater_b_id, {"name": debater_b_id})["name"],
+        persona_b_response="[Contradicting point]",
+        conflict_topic=state["conflict_topic"],
+        pitch_summary=state["pitch_summary"],
+        difficulty_instruction=DIFFICULTY_MODIFIERS.get(state["difficulty"], DIFFICULTY_MODIFIERS["standard"])["question"]
     )
+    
+    question = await llm_provider.generate_response(
+        "Moderator: ask the debate question.", prompt, state["provider"], stream=False
+    )
+    
+    new_turn = {
+        "type": "debate_interjection",
+        "agent_id": "interviewer",
+        "agent_name": AGENTS_CONFIG["interviewer"]["name"],
+        "content": question
+    }
+    
+    return {
+        "conversation": [new_turn],
+        "current_question": question,
+        "directed_at": debater_a_id,
+        "conflict_detected": False # Reset after triggering
+    }
 
+async def hallucination_guard_node(state: FocusGroupState):
+    """Fact-checks the last persona response."""
+    last_turn = state["conversation"][-1]
+    if last_turn["type"] != "persona_response":
+        return {}
+        
+    prompt = HALLUCINATION_GUARD_PROMPT.format(
+        agent_name=last_turn["agent_name"],
+        claim=last_turn["content"],
+        pitch_summary=state["pitch_summary"]
+    )
+    
     try:
         raw = await llm_provider.generate_response(
-            "You are a debate orchestrator. "
-            "Output only valid JSON.",
-            prompt,
-            provider,
-            stream=False
+            "Fact-check. JSON only.", prompt, state["provider"], stream=False
         )
         start = raw.find("{")
         end = raw.rfind("}") + 1
-        decision = json.loads(raw[start:end])
-        speaker_id = decision.get("speaker_id")
-        next_speaker = decision.get("next_speaker")
+        result = json.loads(raw[start:end])
         
-        # Normalize speaker_id if LLM returned a name instead of ID
-        name_to_id = {v["name"]: k for k, v in AGENTS_CONFIG.items()}
-        if speaker_id in name_to_id:
-            speaker_id = name_to_id[speaker_id]
-        
-        # Also handle partial names or shortcuts if host_a/b
-        if speaker_id == "host_a": speaker_id = host_a_id
-        if speaker_id == "host_b": speaker_id = host_b_id
-        
-        decision["speaker_id"] = speaker_id
-        return decision
-    except Exception:
-        # Fallback: alternate between hosts
-        exchange_count = session.get("exchange_count", 0)
-        next_host = host_a_id if exchange_count % 2 == 0 \
-                    else host_b_id
-        return {
-            "next_speaker": "host_a" if next_host == host_a_id 
-                            else "host_b",
-            "speaker_id": next_host,
-            "instruction": "Continue the conversation about "
-                           "the pitch. Make your key point.",
-            "should_ask_pitcher": exchange_count > 0 
-                                  and exchange_count % 4 == 0,
-            "pitcher_question": "What do you think about "
-                                "the concern we just raised?",
-            "observer_to_call": None,
-            "observer_reason": None,
-            "conversation_should_end": exchange_count >= 16
-        }
-
-async def stream_host_utterance(
-    session: dict,
-    agent_id: str,
-    instruction: str,
-    should_ask_pitcher: bool,
-    pitcher_question: str,
-    provider: str,
-    difficulty: str = "standard"
-) -> AsyncGenerator[dict, None]:
-    """
-    Stream a host's natural conversational utterance.
-    Short bursts — 1-3 sentences.
-    """
-    agent = AGENTS_CONFIG[agent_id]
-    difficulty_instruction = DIFFICULTY_MODIFIERS.get(
-        difficulty, DIFFICULTY_MODIFIERS["standard"]
-    )["question"]
-
-    pitcher_instruction = (
-        f"End your message with this direct question "
-        f"to the pitcher: {pitcher_question}"
-        if should_ask_pitcher
-        else "Do not ask the pitcher anything this turn. "
-             "Talk to the other host."
-    )
-
-    system = HOST_UTTERANCE_PROMPT.format(
-        persona_anchor=PERSONA_ANCHORS.get(agent_id, ""),
-        pitch_summary=session["pitch_summary"],
-        conversation_so_far=build_conversation_context(session),
-        instruction=instruction,
-        difficulty_instruction=difficulty_instruction,
-        pitcher_instruction=pitcher_instruction
-    )
-
-    user_message = (
-        f"Speak now as {agent['name']}. "
-        f"1-2 sentences. Natural and conversational."
-    )
-
-    yield sse_event("agent_utterance_start", {
-        "agent_id": agent_id,
-        "name": agent["name"],
-        "role": agent["role"],
-        "type": "host",
-        "asks_pitcher": should_ask_pitcher,
-        "pitcher_question": pitcher_question 
-                            if should_ask_pitcher else None
-    })
-
-    full_text = ""
-    try:
-        stream = await llm_provider.generate_response(
-            system, user_message, provider, stream=True, max_tokens=80
-        )
-        async for text in stream:
-            # Check for immediate interrupt
-            if session.get("waiting_for") == "pitcher_interrupt":
-                break
-                
-            full_text += text
-            yield sse_event("agent_token", {
-                "agent_id": agent_id,
-                "name": agent["name"],
-                "token": text,
-                "type": "host_utterance"
-            })
-    except Exception as e:
-        full_text = f"Error: {str(e)}"
-
-    session["conversation"].append({
-        "turn": len(session["conversation"]),
-        "type": "host_utterance",
-        "agent_id": agent_id,
-        "agent_name": agent["name"],
-        "content": full_text,
-        "asks_pitcher": should_ask_pitcher,
-        "timestamp": str(asyncio.get_event_loop().time())
-    })
-
-    session["exchange_count"] = \
-        session.get("exchange_count", 0) + 1
-
-    yield sse_event("agent_utterance_done", {
-        "agent_id": agent_id,
-        "name": agent["name"],
-        "content": full_text,
-        "asks_pitcher": should_ask_pitcher
-    })
-
-    if should_ask_pitcher and session.get("waiting_for") != "pitcher_interrupt":
-        session["waiting_for"] = "answer"
-
-async def stream_observer_utterance(
-    session: dict,
-    agent_id: str,
-    observer_reason: str,
-    provider: str,
-    difficulty: str = "standard"
-) -> AsyncGenerator[dict, None]:
-    """
-    Stream a called-in observer agent's single contribution.
-    They speak once then step back.
-    """
-    agent = AGENTS_CONFIG[agent_id]
-    difficulty_instruction = DIFFICULTY_MODIFIERS.get(
-        difficulty, DIFFICULTY_MODIFIERS["standard"]
-    )["question"]
-
-    system = OBSERVER_UTTERANCE_PROMPT.format(
-        persona_anchor=PERSONA_ANCHORS.get(agent_id, ""),
-        pitch_summary=session["pitch_summary"],
-        conversation_so_far=build_conversation_context(session),
-        observer_reason=observer_reason,
-        difficulty_instruction=difficulty_instruction
-    )
-
-    user_message = (
-        f"Speak now as {agent['name']}. "
-        f"2-3 sentences. Make your key point."
-    )
-
-    yield sse_event("agent_utterance_start", {
-        "agent_id": agent_id,
-        "name": agent["name"],
-        "role": agent["role"],
-        "type": "observer",
-        "reason": observer_reason
-    })
-
-    full_text = ""
-    try:
-        stream = await llm_provider.generate_response(
-            system, user_message, provider, stream=True
-        )
-        async for text in stream:
-            # Check for immediate interrupt
-            if session.get("waiting_for") == "pitcher_interrupt":
-                full_text += "... [INTERRUPTED]"
-                break
-
-            full_text += text
-            yield sse_event("agent_token", {
-                "agent_id": agent_id,
-                "name": agent["name"],
-                "token": text,
-                "type": "observer_utterance"
-            })
-    except Exception as e:
-        full_text = f"Error: {str(e)}"
-
-    session["conversation"].append({
-        "turn": len(session["conversation"]),
-        "type": "observer_utterance",
-        "agent_id": agent_id,
-        "agent_name": agent["name"],
-        "content": full_text,
-        "timestamp": str(asyncio.get_event_loop().time())
-    })
-
-    # Mark this observer as called — they can't be 
-    # called again this session
-    if "called_observers" not in session:
-        session["called_observers"] = []
-    session["called_observers"].append(agent_id)
-
-    session["exchange_count"] = \
-        session.get("exchange_count", 0) + 1
-
-    yield sse_event("agent_utterance_done", {
-        "agent_id": agent_id,
-        "name": agent["name"],
-        "content": full_text,
-        "type": "observer"
-    })
-
-async def stream_pitcher_interrupt_ack(
-    session: dict,
-    pitcher_message: str,
-    provider: str,
-    difficulty: str = "standard",
-    respondent_id: Optional[str] = None
-) -> AsyncGenerator[dict, None]:
-    """
-    Stream the chosen host's acknowledgement of 
-    a pitcher interrupt.
-    """
-    intervention_count = session.get(
-        "pitcher_intervention_count", 0
-    )
-    if not respondent_id:
-        host_a = session["host_a"]
-        host_b = session["host_b"]
-        respondent_id = host_a if intervention_count % 2 == 0 \
-                             else host_b
-
-    agent = AGENTS_CONFIG[respondent_id]
-    difficulty_instruction = DIFFICULTY_MODIFIERS.get(
-        difficulty, DIFFICULTY_MODIFIERS["standard"]
-    )["reaction"]
-
-    # Detect if pitcher sent actual content or just clicked the button
-    is_signal_only = (
-        not pitcher_message.strip() or
-        pitcher_message.strip() == "[interrupt_signal]"
-    )
-
-    # Get pitcher name from session if available
-    pitcher_name = session.get("pitcher_name", "our pitcher")
-    if not pitcher_name or pitcher_name.strip() == "":
-        pitcher_name = "our pitcher"
-        
-    import random
-    responses = [
-        f"Oh, looks like {pitcher_name} wants to jump in. Go ahead.",
-        f"Actually, {pitcher_name} looks like they have something to add. What's on your mind?",
-        f"Wait, let's hear what {pitcher_name} has to say. Go ahead!"
-    ]
-    full_text = random.choice(responses)
-
-    yield sse_event("agent_utterance_start", {
-        "agent_id": respondent_id,
-        "name": agent["name"],
-        "role": agent["role"],
-        "type": "interrupt_ack"
-    })
-
-    # Give the frontend TTS engine a split second to reset after cancelling
-    # the previous speech, avoiding a notorious Chrome bug.
-    await asyncio.sleep(0.5)
-
-    yield sse_event("agent_token", {
-        "agent_id": respondent_id,
-        "name": agent["name"],
-        "token": full_text,
-        "type": "interrupt_ack"
-    })
-
-    session["conversation"].append({
-        "turn": len(session["conversation"]),
-        "type": "interrupt_ack",
-        "agent_id": respondent_id,
-        "agent_name": agent["name"],
-        "content": full_text,
-        "timestamp": str(asyncio.get_event_loop().time())
-    })
-
-    session["pitcher_intervention_count"] = \
-        intervention_count + 1
-    session["exchange_count"] = \
-        session.get("exchange_count", 0) + 1
-
-    yield sse_event("agent_utterance_done", {
-        "agent_id": respondent_id,
-        "name": agent["name"],
-        "content": full_text,
-        "type": "interrupt_ack"
-    })
-
-async def get_interrupt_respondent(session: dict, pitcher_message: str, provider: str) -> str:
-    host_a = session["host_a"]
-    host_b = session["host_b"]
-    
-    agent_a = AGENTS_CONFIG[host_a]
-    agent_b = AGENTS_CONFIG[host_b]
-    
-    prompt = f"""
-    You are a conversation orchestrator for a pitch panel.
-    Pitcher interrupted: "{pitcher_message}"
-    
-    Hosts:
-    - {host_a}: {agent_a['name']} ({agent_a['role']})
-    - {host_b}: {agent_b['name']} ({agent_b['role']})
-    
-    Which host should respond? 
-    - Use 'vc' or 'hostile' for pressure/skepticism.
-    - Use 'enthusiastic' or 'expert' for technical or positive points.
-    
-    Output ONLY the agent_id.
-    """
-    try:
-        resp = await llm_provider.generate_response(prompt, pitcher_message, provider, stream=False)
-        chosen = resp.strip().lower()
-        if chosen in [host_a, host_b]:
-            return chosen
-    except Exception:
+        if result.get("flag", False):
+            flag_entry = {
+                "agent_name": last_turn["agent_name"],
+                "content": last_turn["content"],
+                "flag_reason": result.get("flag_reason"),
+                "confidence": result.get("confidence")
+            }
+            return {"flagged_claims": [flag_entry]}
+    except:
         pass
-    return host_a
+    return {}
 
-async def stream_notebooklm_conversation(
+async def invite_pitcher_node(state: FocusGroupState):
+    """Invites the pitcher to respond."""
+    new_turn = {
+        "type": "interviewer_invitation",
+        "agent_id": "interviewer",
+        "agent_name": AGENTS_CONFIG["interviewer"]["name"],
+        "content": "I'll pause here. What do you have to say to that?"
+    }
+    
+    session_id = state["session_id"]
+    if session_id in sessions:
+        session = sessions[session_id]
+        
+        session["events"]["answer_event"].clear()
+        await session["events"]["answer_event"].wait()
+        
+        answer = session["pending_answer"]
+        session["pending_answer"] = ""
+        
+        pitcher_turn = {
+            "type": "pitcher_response",
+            "agent_name": "Pitcher",
+            "content": answer
+        }
+        
+        return {
+            "conversation": [new_turn, pitcher_turn],
+            "should_invite_pitcher": True
+        }
+        
+    return {
+        "conversation": [new_turn],
+        "should_invite_pitcher": True 
+    }
+
+async def check_completion_node(state: FocusGroupState):
+    """Checks if the session should end."""
+    return {
+        "session_complete": state["turn_count"] >= 12
+    }
+
+# --- ORCHESTRATOR ---
+
+async def stream_echochamber(
     session_id: str,
     session: dict,
     provider: str,
     difficulty: str = "standard"
 ) -> AsyncGenerator[dict, None]:
     """
-    NotebookLM-style conversation orchestrator.
-    Two hosts are discussing the pitch:
-Host A: {host_a_id} ({host_a_name}, {host_a_role})
-Host B: {host_b_id} ({host_b_name}, {host_b_role})
-
-Observer agents available to call in:
-{observer_list}
+    EchoChamber-style LangGraph orchestrator.
     """
-
     # ── SETUP ────────────────────────────────────────
-    host_a, host_b = await select_host_pair(
-        session, provider
-    )
-    session["host_a"] = host_a
-    session["host_b"] = host_b
-    session["called_observers"] = []
+    # Initialize State
+    initial_state: FocusGroupState = {
+        "session_id": session_id,
+        "pitch_summary": session["pitch_summary"],
+        "domain": session["domain"],
+        "difficulty": difficulty,
+        "provider": provider,
+        "conversation": [],
+        "current_question": "",
+        "directed_at": "",
+        "turn_count": 0,
+        "last_two_responses": [],
+        "conflict_detected": False,
+        "conflict_topic": "",
+        "debater_a": "",
+        "debater_b": "",
+        "pitcher_message_pending": False,
+        "pitcher_message": "",
+        "should_invite_pitcher": False,
+        "session_complete": False,
+        "flagged_claims": []
+    }
+    
+    # Update session object
     session["exchange_count"] = 0
-    session["pitcher_intervention_count"] = 0
-    session["waiting_for"] = None
-
-    yield sse_event("hosts_selected", {
-        "host_a": {
-            "agent_id": host_a,
-            "name": AGENTS_CONFIG[host_a]["name"],
-            "role": AGENTS_CONFIG[host_a]["role"]
-        },
-        "host_b": {
-            "agent_id": host_b,
-            "name": AGENTS_CONFIG[host_b]["name"],
-            "role": AGENTS_CONFIG[host_b]["role"]
-        },
-        "observers": [
-            {
-                "agent_id": aid,
-                "name": AGENTS_CONFIG[aid]["name"],
-                "role": AGENTS_CONFIG[aid]["role"]
-            }
-            for aid in session["active_panel"]
-            if aid not in [host_a, host_b]
+    session.setdefault("flagged_claims", [])
+    
+    yield sse_event("echochamber_start", {
+        "personas": [
+            {"id": pid, "name": AGENTS_CONFIG.get(pid, {}).get("name", pid)} 
+            for pid in session.get("active_panel", [])
         ],
         "session_id": session_id
     })
 
-    yield sse_event("status", {
-        "message": "Panel is live. The hosts are discussing "
-                   "your pitch...",
-        "phase": "conversation_start"
+    # Compile Graph
+    graph = build_focus_group_graph(
+        interviewer_node,
+        persona_response_node,
+        conflict_router_node,
+        debate_engine_node,
+        invite_pitcher_node,
+        hallucination_guard_node,
+        check_completion_node
+    )
+    
+    # ── GRAPH EXECUTION ──────────────────────────────
+    async for event in graph.astream(initial_state):
+        # LangGraph 'astream' yields dicts like {'node_name': state_update}
+        node_name = list(event.keys())[0]
+        update = event[node_name]
+        
+        if not update:
+            continue
+            
+        # Merge update into our local session for persistence/reference
+        if "conversation" in update:
+            for turn in update["conversation"]:
+                # Stream the new turn
+                yield sse_event("agent_turn", turn)
+                session["conversation"].append(turn)
+                
+        if "flagged_claims" in update:
+            for fc in update["flagged_claims"]:
+                yield sse_event("claim_flagged", fc)
+                session["flagged_claims"].append(fc)
+        
+        # Handle intervention invitation
+        if update.get("should_invite_pitcher"):
+            # Wait block moved to invite_pitcher_node
+            # We still yield waiting state before the node blocks. Wait, the node already yielded?
+            # LangGraph astream yields update AFTER the node returns.
+            # So the wait happened inside the node. We just send a sync here if needed, but 
+            # the next node will emit the conversation update with the pitcher response.
+            pass
+            
+        await asyncio.sleep(0.5) # Pacing
+        
+    # ── COMPLETION ───────────────────────────────────
+    yield sse_event("echochamber_complete", {
+        "session_id": session_id
     })
+    
+    async for event in stream_meta_analysis(session_id, session, provider):
+        yield event
 
-    # ── MAIN CONVERSATION LOOP ────────────────────────
-    last_active_agent = None
-    while True:
-
-        # Check for pitcher interrupt first
-        if session.get("waiting_for") == "pitcher_interrupt":
-            session["events"]["answer_event"].clear()
-            
-            # 1. SHOW INPUT BOX AND INVITE IMMEDIATELY
-            yield sse_event("waiting_for_pitcher_interrupt", {
-                "session_id": session_id,
-                "message": "You interrupted — go ahead"
-            })
-
-            # 2. ACKNOWLEDGMENT (Intent to speak)
-            # Use whoever was just speaking as the one to acknowledge
-            respondent_id = last_active_agent or session["host_a"]
-            
-            async for event in stream_pitcher_interrupt_ack(
-                session, "", provider, difficulty, respondent_id
-            ):
-                yield event
-
-            # 3. WAIT (User is already typing)
-            await session["events"]["answer_event"].wait()
-            pitcher_msg = session["pending_answer"]
-            session["pending_answer"] = ""
-            session["waiting_for"] = None
-            
-            yield sse_event("pitcher_interrupted", {
-                "content": pitcher_msg,
-                "session_id": session_id
-            })
-
-            # Log the pitcher interrupt
-            session["conversation"].append({
-                "turn": len(session["conversation"]),
-                "type": "pitcher_interrupt",
-                "agent_id": "pitcher",
-                "agent_name": "Pitcher",
-                "content": pitcher_msg,
-                "timestamp": str(asyncio.get_event_loop().time())
-            })
-
-            await asyncio.sleep(0.3)
-            continue
-
-        # Ensure answer_event is clean before setting up the race condition
-        session["events"]["answer_event"].clear()
-
-        # Get orchestrator decision asynchronously so it can be interrupted
-        decision_task = asyncio.create_task(
-            get_next_orchestration_decision(session, provider, difficulty)
+async def stream_meta_analysis(session_id: str, session: dict, provider: str):
+    """Produces the Black Swan Report."""
+    yield sse_event("status", {"message": "Meta-Analyst is uncovering non-obvious insights...", "phase": "meta_analysis"})
+    
+    transcript = build_conversation_context(session)
+    prompt = META_ANALYST_PROMPT.format(
+        pitch_summary=session["pitch_summary"],
+        conversation_transcript=transcript,
+        domain=session["domain"].get("sub_domain", "general")
+    )
+    
+    full_report_json = ""
+    try:
+        raw = await llm_provider.generate_response(
+            "You are a Meta-Analyst. JSON only.", prompt, provider, stream=False
         )
-        interrupt_task = asyncio.create_task(session["events"]["answer_event"].wait())
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        full_report_json = raw[start:end]
+        report = json.loads(full_report_json)
         
-        done, pending = await asyncio.wait(
-            [decision_task, interrupt_task],
-            return_when=asyncio.FIRST_COMPLETED
-        )
-        
-        if session.get("waiting_for") == "pitcher_interrupt":
-            if decision_task in pending:
-                decision_task.cancel()
-            continue
-            
-        if interrupt_task in pending:
-            interrupt_task.cancel()
-
-        if not decision_task.done():
-            # In case the event fired for some other unknown reason, avoid the state crash
-            decision_task.cancel()
-            continue
-            
-        decision = decision_task.result()
-
-        # Check if conversation should end
-        if decision.get("conversation_should_end"):
-            break
-
-        next_speaker = decision.get("next_speaker", "")
-        speaker_id = decision.get("speaker_id")
-        instruction = decision.get(
-            "instruction", "Continue the discussion."
-        )
-        should_ask_pitcher = decision.get(
-            "should_ask_pitcher", False
-        ) or (next_speaker == "ask_pitcher")
-        
-        pitcher_question = decision.get(
-            "pitcher_question", ""
-        )
-        observer_to_call = decision.get("observer_to_call")
-        observer_reason = decision.get("observer_reason", "")
-
-        # ── OBSERVER CALLED IN ────────────────────────
-        if (next_speaker == "call_observer" or observer_to_call) and observer_to_call:
-            session["called_observers"] = session.get("called_observers", []) + [observer_to_call]
-            last_active_agent = observer_to_call
-            async for event in stream_observer_utterance(
-                session, observer_to_call,
-                observer_reason, provider, difficulty
-            ):
-                yield event
-            
-            session["exchange_count"] = session.get("exchange_count", 0) + 1
-            await asyncio.sleep(0.4)
-
-            # If observer asked the pitcher something,
-            # wait for answer
-            last_turn = session["conversation"][-1]
-            if "?" in last_turn.get("content", ""):
-                session["events"]["answer_event"].clear()
-                session["waiting_for"] = "answer"
-
-                yield sse_event("waiting_for_answer", {
-                    "agent_id": observer_to_call,
-                    "agent_name": AGENTS_CONFIG[
-                        observer_to_call
-                    ]["name"],
-                    "question": last_turn["content"],
-                    "is_observer": True,
-                    "session_id": session_id
-                })
-
-                await session["events"]["answer_event"].wait()
-                obs_answer = session["pending_answer"]
-                session["pending_answer"] = ""
-                session["waiting_for"] = None
-
-                session["conversation"].append({
-                    "turn": len(session["conversation"]),
-                    "type": "answer",
-                    "agent_id": "pitcher",
-                    "agent_name": "Pitcher",
-                    "content": obs_answer,
-                    "timestamp": str(
-                        asyncio.get_event_loop().time()
-                    )
-                })
-
-                yield sse_event("pitcher_answer_received", {
-                    "answer": obs_answer,
-                    "agent_id": observer_to_call
-                })
-
-            continue
-
-        # ── HOST SPEAKS ───────────────────────────────
-        if (next_speaker in ("host_a", "host_b", "ask_pitcher") or next_speaker.startswith("host")) \
-                and speaker_id:
-            last_active_agent = speaker_id
-            async for event in stream_host_utterance(
-                session, speaker_id, instruction,
-                should_ask_pitcher, pitcher_question,
-                provider, difficulty
-            ):
-                yield event
-
-            session["exchange_count"] = session.get("exchange_count", 0) + 1
-            await asyncio.sleep(0.3)
-
-            # If host asked the pitcher, wait for answer
-            if should_ask_pitcher:
-                session["events"]["answer_event"].clear()
-                session["waiting_for"] = "answer"
-
-                yield sse_event("waiting_for_answer", {
-                    "agent_id": speaker_id,
-                    "agent_name": AGENTS_CONFIG[
-                        speaker_id
-                    ]["name"],
-                    "question": pitcher_question,
-                    "session_id": session_id
-                })
-
-                await session["events"]["answer_event"].wait()
-                answer = session["pending_answer"]
-                session["pending_answer"] = ""
-                session["waiting_for"] = None
-
-                session["conversation"].append({
-                    "turn": len(session["conversation"]),
-                    "type": "answer",
-                    "agent_id": "pitcher",
-                    "agent_name": "Pitcher",
-                    "content": answer,
-                    "timestamp": str(
-                        asyncio.get_event_loop().time()
-                    )
-                })
-
-                session["pitcher_intervention_count"] = session.get("pitcher_intervention_count", 0) + 1
-                yield sse_event("pitcher_answer_received", {
-                    "answer": answer,
-                    "agent_id": speaker_id
-                })
-
-            continue
-
-        # If we got here and didn't match host or observer, 
-        # let's just use the fallback next time instead of breaking
-        session["exchange_count"] = session.get("exchange_count", 0) + 1
-        await asyncio.sleep(0.1)
-        continue
-
-        # Safety: if decision is unclear, break
-        break
+        session["black_swan"] = report
+        yield sse_event("black_swan_report", report)
+    except Exception as e:
+        yield sse_event("error", {"message": f"Meta-analysis failed: {str(e)}"})
     
     # Complete
     session["phase"] = "verdict"
@@ -974,14 +664,260 @@ async def handle_verdict_pushback(session_id: str, pushback: str, provider: str,
 
 # Mapping for agent IDs to names/roles (since we deleted AGENTS config usage here)
 AGENTS_CONFIG = {
-    "vc": {"name": "Arjun Mehta", "role": "Venture Capitalist"},
-    "enthusiastic": {"name": "Priya Sharma", "role": "Product Manager"},
-    "hostile": {"name": "Ravi Kumar", "role": "Operations Manager"},
-    "expert": {"name": "Dr. Ananya Iyer", "role": "Industry Expert"},
-    "competitor": {"name": "Meera Pillai", "role": "Marketing Manager"},
-    "beginner": {"name": "Kiran", "role": "Student"},
-    "suresh": {"name": "Suresh Nair", "role": "Experienced Operator"},
-    "design_critic": {"name": "Aisha Thomas", "role": "Design Critic"}
+    "vc": {
+        "name": "Arjun Mehta", 
+        "role": "Skeptical VC",
+        "system_prompt": """You are Arjun Mehta, 41, a Partner at 
+an early-stage venture fund in Bengaluru.
+You have 12 years in venture capital and 
+have evaluated over 400 startup pitches.
+You have invested in 22 companies.
+You are intellectually rigorous, direct, 
+and slightly impatient.
+You are not mean but you are never soft.
+
+EVALUATION PRIORITIES (in this order):
+1. Market size — vitamin or painkiller? 
+   TAM above $500M with a credible source?
+2. Defensibility — what is the moat? 
+   Why can't a competitor copy in 6 months?
+3. Traction — has anyone paid for this?
+   One paying stranger beats 10,000 signups.
+
+VOICE RULES:
+- Medium-length responses. No bullet points.
+- Use em-dashes for asides — like this.
+- Never say great idea or interesting concept.
+- Always end with one sharp question.
+- Reference real companies as comparisons.
+
+RED LINES — always challenge these:
+- No competition claim: name a competitor.
+- Huge market claim: demand a number.
+- AI-powered X pitch: ask what job it does.
+- Everyone as target: demand first 10 
+  paying customers by name.
+
+FOCUS GROUP BEHAVIOR:
+You are in a structured panel interview.\nThe Lead Strategist will direct questions \nat you by name. When asked, respond in \n2-3 sentences from your perspective only.\nIf another persona said something in the \nlast few turns that you agree or disagree \nwith, reference them by name.\nDo not give a speech. Make your point \nand let the conversation move.\nYour OCEAN profile: high conscientiousness,\nlow agreeableness. This means you are \nprecise and direct, not warm or agreeable.\nYour hidden objection surfaces when you \nhear vague claims about market size, \nviral growth, or lack of competition.\nWhen you hear these, challenge immediately."""
+    },
+    "enthusiastic": {
+        "name": "Priya Sharma", 
+        "role": "Product Manager",
+        "system_prompt": """You are Priya Sharma, 24, Product Manager 
+at a mid-size tech company in Mumbai.
+You are an early adopter who loves finding 
+tools that solve real problems.
+You have 40+ apps on your phone.
+You pay for 6 SaaS subscriptions.
+You are enthusiastic but not naive.
+Your enthusiasm is earned, not given.
+
+EVALUATION PRIORITIES (in this order):
+1. Do I personally have this problem?
+2. Can I set this up in under 5 minutes?
+3. Does it respect my time?
+
+VOICE RULES:
+- First person always. I would use this...
+- Reference your own life specifically.
+- Warm when something genuinely excites you.
+- 3-4 sentences. You are busy.
+- No jargon. No TAM, moat, ICP.
+
+RED LINES — always challenge these:
+- Simple and easy with complex flow: 
+  call out the contradiction.
+- If you don't feel the pain: say so.
+- Significant behavior change required: 
+  flag as adoption risk.
+
+FOCUS GROUP BEHAVIOR:
+You are in a structured panel interview. \nRespond in 2-3 sentences from your \npersonal lived experience.\nReference your own daily life specifically.\nWhen Ravi is being too pessimistic about \nsomething you genuinely believe in, \npush back by name and say why.\nYour OCEAN profile: high openness, \nhigh extraversion. You speak warmly \nand specifically about your own life.\nYour hidden objection surfaces when you \nhear the solution requires significant \nbehavior change or complex onboarding."""
+    },
+    "hostile": {
+        "name": "Ravi Kumar", 
+        "role": "Ops Manager",
+        "system_prompt": """You are Ravi Kumar, 38, Operations Manager 
+at a manufacturing company in Pune.
+You have 15 years managing teams.
+You use WhatsApp and Excel.
+You have been burned by 3 software 
+implementations that overpromised.
+You are not stupid. You need proof.
+
+EVALUATION PRIORITIES (in this order):
+1. Does the current way work fine?
+2. What happens when it fails?
+3. Who is responsible when it goes wrong?
+
+VOICE RULES:
+- Short sentences. Maximum 3. Never more.
+- Start objections with Look,
+- Reference your own bad experiences.
+- No startup language. Ever.
+- You are honest. Not mean.
+
+RED LINES — always challenge these:
+- App replacing human contact: 
+  my parents want a call not an app.
+- Assuming reliable internet: raise this.
+- Expensive subscription for simple problem:
+  compare to free alternative.
+- Health or personal data: be suspicious.
+
+FOCUS GROUP BEHAVIOR:
+You are in a structured panel interview.\nMaximum 3 sentences. Start with Look,\nYou are the person who asks what everyone\nis thinking but won't say.\nWhen Priya gets enthusiastic, you are \noften the counterweight — not to be \nnegative, but because someone has to \nask what happens when it breaks.\nYour OCEAN profile: low agreeableness,\nhigh neuroticism. You are terse and \nskeptical. You need proof.\nYour hidden objection surfaces when you \nhear easy, seamless, or just works."""
+    },
+    "expert": {
+        "name": "Dr. Ananya Iyer", 
+        "role": "Industry Consultant",
+        "system_prompt": """You are Dr. Ananya Iyer, 36, Associate 
+Professor and industry consultant.
+Your domain shifts to match the pitch:
+- Health → public health researcher
+- Finance → behavioral economist
+- Education → learning sciences researcher
+- Tech → HCI researcher
+- Other → most relevant field expert
+You have 10 years research experience.
+You have read the papers they haven't.
+
+EVALUATION PRIORITIES (in this order):
+1. Technical accuracy — is the claim true?
+2. Prior art — has this been tried? Name it.
+3. Regulatory landscape — what rules apply?
+
+VOICE RULES:
+- Academic precision, plain English.
+- Always cite one real specific reference.
+- If you cannot cite real, say so — never 
+  invent a prior attempt.
+- 3-4 sentences.
+- Never say interesting as filler.
+
+RED LINES — always challenge these:
+- First ever claim: name a prior attempt.
+- Regulatory underestimation: flag it.
+- Statistics without source: challenge them.
+- Oversimplification: flag and offer path.
+
+FOCUS GROUP BEHAVIOR:
+You are in a structured panel interview.\nRespond in 3-4 sentences with precision.\nAlways cite at least one real specific \nreference — a study, a company, a paper.\nIf you cannot cite a real one, say \nI am not aware of a specific prior attempt \nrather than inventing one.\nWhen someone makes a statistic claim, \nyou are the person who checks it.\nYour OCEAN profile: very high \nconscientiousness, accuracy-biased.\nYour hidden objection surfaces when you \nhear studies show or research proves \nwithout a source."""
+    },
+    "competitor": {
+        "name": "Meera Pillai", 
+        "role": "Marketing Manager",
+        "system_prompt": """You are Meera Pillai, 31, Marketing Manager
+at an e-commerce company in Chennai.
+You use 8-10 tools every day.
+You already use a competitor product for 
+whatever the pitcher is describing.
+You will name it and speak as its user.
+
+EVALUATION PRIORITIES (in this order):
+1. Does this do something my tool cannot?
+   Not marginally — meaningfully different.
+2. What is the switching cost?
+3. Will this company exist in 2 years?
+
+VOICE RULES:
+- Always name your current tool first.
+- Use my current tool already does this.
+- Speak in value and switching cost terms.
+- 3-4 sentences. Direct. No hedging.
+
+RED LINES — always challenge these:
+- Novelty claims: name existing feature.
+- Better UX as main differentiator: 
+  ask for specific better interaction.
+- No pricing mentioned: always ask cost.
+
+FOCUS GROUP BEHAVIOR:
+You are in a structured panel interview.\nAlways name a specific tool you use.\n3-4 sentences. Direct. \nYour most important contribution in \nany session is naming the competitor \nthe pitcher forgot to mention.\nWhen someone claims something is unique, \nyou are the one who says actually \n[competitor] already does this.\nYour OCEAN profile: high \nconscientiousness, moderate agreeableness.\nYour hidden objection surfaces when you \nhear replaces, all-in-one, or migrate."""
+    },
+    "beginner": {
+        "name": "Kiran", 
+        "role": "Student",
+        "system_prompt": """You are Kiran, 19, second-year engineering
+student at a tier-3 college in a small city.
+You use Instagram, YouTube, and WhatsApp.
+You have never paid for an app.
+You do not know what SaaS, TAM, MVP mean.
+You are not stupid. Different world.
+
+EVALUATION PRIORITIES (in this order):
+1. Can I explain this in one sentence?
+2. Is it free?
+3. Does it work on basic Android?
+
+VOICE RULES:
+- Informal. Maximum 3 sentences.
+- Use bhai or yaar naturally, not forced.
+- If you don't understand a word: ask.
+- Not embarrassed to be confused.
+
+RED LINES — always flag these:
+- Jargon: what does that mean?
+- Payment requirement: is this free?
+- Complex setup: how many steps?
+- Not for me: is this even for someone 
+  like me?
+
+FOCUS GROUP BEHAVIOR:
+You are in a structured panel interview.\nMaximum 3 sentences. Informal.\nUse bhai or yaarc occasionally, naturally.\nYou are the clarity test for the panel.\nWhen you do not understand something,\nsay so immediately and simply.\nWhen something sounds expensive, say so.\nYour OCEAN profile: high openness,\nhigh agreeableness, simplicity-biased. \nYour hidden objection surfaces when you \nhear subscription, premium, or upgrade."""
+    },
+    "suresh": {
+        "name": "Suresh Nair", 
+        "role": "Shop Owner",
+        "system_prompt": """You are Suresh Nair, 52, owner of 4 
+medical stores in Kerala for 22 years.
+You have seen businesses succeed and fail.
+You do not care about vision or ambition.
+You care about: does this work on the ground?
+
+EVALUATION PRIORITIES (in this order):
+1. Unit economics — profit per unit 
+   after every cost?
+2. Operations — who does the work at 7am?
+3. Working capital — cash before revenue?
+
+VOICE RULES:
+- Short sentences. Maximum 4.
+- Say in my experience when referencing 
+  your own business.
+- Use specific rupee amounts.
+- Never use startup language.
+
+RED LINES — always raise these:
+- No unit economics: ask for breakdown.
+- Staff will handle it: ask who specifically.
+- Ignores working capital: ask months 
+  they can survive with zero revenue.
+
+FOCUS GROUP BEHAVIOR:
+You are in a structured panel interview.\nMaximum 4 sentences. \nSay in my experience when you draw on \nyour 22 years of running a business.\nUse specific rupee amounts when comparing.\nYou ask the operational questions nobody \nelse thinks to ask.\nYour OCEAN profile: very high \nconscientiousness, low openness.\nYou are pragmatic and number-focused.\nYour hidden objection surfaces when you \nhear scale, automate, or runs itself."""
+    },
+    "design_critic": {
+        "name": "Aisha Thomas", 
+        "role": "Design Strategist",
+        "system_prompt": "You are Aisha Thomas, an high-end aesthetic critic.\nFOCUS GROUP BEHAVIOR:\nYou bring the aesthetic \nand usability lens nobody else has. \nIf an image has been uploaded you comment \non specific visual elements you can see. \nIf no image exists, ask what the design \nlanguage is before giving any opinion."
+    },
+    "dr_iyer_design": {
+        "name": "Dr. Ananya Iyer (Design)", 
+        "role": "Technical Design Critic",
+        "system_prompt": "You are Dr. Ananya Iyer in design mode.\nYou evaluate the actual visual work — not \nthe pitch, the work. You look for whether \ndesign choices are intentional or accidental, \nculturally appropriate for the Indian market, \nand technically sound for production. \nCRITICAL: Only reference real design movements, \nreal brands, real designers. Never invent \na reference. \nIn this focus group your question references \nsomething specific you can see or infer \nabout the design itself."
+    },
+    "meera_design": {
+        "name": "Meera Pillai (Design)", 
+        "role": "Design Client",
+        "system_prompt": "You are Meera Pillai evaluating a designer \nas a potential hire for a brand project.\nYou have a budget of 80,000 to 1,50,000 \nrupees. One previous freelancer was excellent. \nOne vanished after the advance payment. \nYou are professionally cautious. \nIn this focus group you ask client questions \nnot critic questions — can I trust this \nperson with my CEO's first impression, \nwhat does this cost, how many revisions, \nwhat file formats do I get."
+    },
+    "interviewer": {
+        "name": "Claude (Interviewer)", 
+        "role": "Lead Strategist",
+        "system_prompt": "You are the Lead Strategist running a focus group."
+    }
 }
 
 # The initial round 1 flow which now incorporates HITL
@@ -1054,11 +990,13 @@ async def run_round1(session_id: str, session: dict, pitch: str, provider: str, 
     yield sse_event("domain_classified", {**domain_data, "active_panel": active_panel})
     
     # Instead of running all agents at once, we move to the conversation orchestrator
-    async for event in stream_notebooklm_conversation(session_id, session, provider, difficulty):
+    async for event in stream_echochamber(session_id, session, provider, difficulty):
         yield event
         
     if pitcher_id:
-        save_pitcher_memory(pitcher_id, session, session.get("verdict_final") or session.get("verdict", ""))
+        report = session.get("black_swan", {})
+        summary_verdict = report.get("one_line_summary", "")
+        save_pitcher_memory(pitcher_id, session, summary_verdict)
 
 async def generate_rebuttal_response(session: dict, agent_id: str, agent_claim: str, user_text: str, provider: str) -> str:
     agent = AGENTS_CONFIG.get(agent_id, {"name": "Agent", "role": "Panelist"})

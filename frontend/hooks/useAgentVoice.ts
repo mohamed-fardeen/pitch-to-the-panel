@@ -23,7 +23,16 @@ const AGENT_VOICE_CONFIGS: Record<string, VoiceConfig> = {
   observer: { pitch: 0.9, rate: 1.1, genderPref: "female" },
   pitcher: { pitch: 1.0, rate: 1.0, genderPref: "male" },
   mediator: { pitch: 0.95, rate: 1.0, genderPref: "female" },
-  critic: { pitch: 0.75, rate: 0.9, genderPref: "male" }
+  critic: { pitch: 0.75, rate: 0.9, genderPref: "male" },
+  
+  // v3 EchoChamber Personas
+  marcus: { pitch: 0.8, rate: 0.9, genderPref: "male" },
+  sophia: { pitch: 1.15, rate: 1.05, genderPref: "female" },
+  elara: { pitch: 1.0, rate: 1.0, genderPref: "female" },
+  tariq: { pitch: 0.75, rate: 0.85, genderPref: "male" },
+  lena: { pitch: 1.1, rate: 1.15, genderPref: "female" },
+  victor: { pitch: 0.85, rate: 0.95, genderPref: "male" },
+  interviewer: { pitch: 0.9, rate: 1.0, genderPref: "male" }
 };
 
 // Very safe chunk length to avoid Chrome's 200-char/15-second "silent restart" bug
@@ -65,7 +74,7 @@ export function useAgentVoice() {
 
   const getBestVoice = (role: AgentRole): SpeechSynthesisVoice | null => {
     if (voices.length === 0) return null;
-    const config = AGENT_VOICE_CONFIGS[role];
+    const config = AGENT_VOICE_CONFIGS[role] || { pitch: 1.0, rate: 1.0, genderPref: "male" };
     const pool = voices.filter(v => v.lang.startsWith("en") || v.lang.startsWith("EN"));
     if (pool.length === 0) return voices[0];
 

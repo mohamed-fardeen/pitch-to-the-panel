@@ -13,7 +13,12 @@ export interface PanelState {
 }
 
 export interface ConversationTurn {
-  type: "question" | "answer" | "reaction" | "interrupt_q" | "interrupt_a" | "host_utterance" | "observer_utterance" | "pitcher_interrupt" | "interrupt_ack" | string;
+  type: 
+    | "question" | "answer" | "reaction" | "interrupt_q" | "interrupt_a" 
+    | "host_utterance" | "observer_utterance" | "pitcher_interrupt" 
+    | "interrupt_ack" | "interviewer_question" | "persona_response" 
+    | "debate_interjection" | "interviewer_invitation" | "pitcher_response"
+    | string;
   agent_id?: string;
   agent_name?: string;
   content: string;

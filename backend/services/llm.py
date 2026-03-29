@@ -1,6 +1,9 @@
 import os
+import json
+import asyncio
 from typing import AsyncGenerator
-import google.generativeai as genai
+from google import genai as google_genai
+from google.genai import types
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
@@ -13,13 +16,13 @@ class LLMProvider:
         
         gemini_api_key = os.getenv("GEMINI_API_KEY")
         if gemini_api_key:
-            genai.configure(api_key=gemini_api_key)
-            self.gemini_model = "configured"
+            self.gemini_client = google_genai.Client(api_key=gemini_api_key)
+            self.gemini_model = "gemini-1.5-pro"
         else:
+            self.gemini_client = None
             self.gemini_model = None
 
         self.openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")) if os.getenv("OPENAI_API_KEY") else None
-        
         self.groq_client = AsyncOpenAI(api_key=os.getenv("GROQ_API_KEY"), base_url="https://api.groq.com/openai/v1") if os.getenv("GROQ_API_KEY") else None
 
     async def generate_response(self, system_prompt: str, user_prompt: str, provider: str = "anthropic", stream: bool = False, max_tokens: int = 1024) -> str | AsyncGenerator[str, None]:
@@ -27,7 +30,7 @@ class LLMProvider:
             return await self._generate_response_internal(system_prompt, user_prompt, provider, stream, max_tokens)
         except Exception as e:
             print(f"Provider {provider} failed: {e}. Falling back to Gemini.")
-            if provider != "gemini" and self.gemini_model:
+            if provider != "gemini" and self.gemini_client:
                 try:
                     return await self._generate_response_internal(system_prompt, user_prompt, "gemini", stream, max_tokens)
                 except Exception as fallback_e:
@@ -53,16 +56,19 @@ class LLMProvider:
                 return response.content[0].text
 
         elif provider == "gemini":
-            if not self.gemini_model:
+            if not self.gemini_client:
                 raise ValueError("Gemini API key not configured")
             
-            model = genai.GenerativeModel('gemini-1.5-pro', system_instruction=system_prompt)
             if stream:
-                return self._stream_gemini(model, user_prompt, max_tokens)
+                return self._stream_gemini(system_prompt, user_prompt, max_tokens)
             else:
-                response = await model.generate_content_async(
-                    user_prompt,
-                    generation_config=genai.types.GenerationConfig(max_output_tokens=max_tokens)
+                response = await self.gemini_client.aio.models.generate_content(
+                    model=self.gemini_model,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        max_output_tokens=max_tokens
+                    )
                 )
                 return response.text
 
@@ -114,13 +120,17 @@ class LLMProvider:
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
                 yield event.delta.text
 
-    async def _stream_gemini(self, model, user_prompt: str, max_tokens: int = 1024) -> AsyncGenerator[str, None]:
-        response = await model.generate_content_async(
-            user_prompt, 
-            stream=True,
-            generation_config=genai.types.GenerationConfig(max_output_tokens=max_tokens)
+    async def _stream_gemini(self, system_prompt: str, user_prompt: str, max_tokens: int = 1024) -> AsyncGenerator[str, None]:
+        stream = await self.gemini_client.aio.models.generate_content(
+            model=self.gemini_model,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                max_output_tokens=max_tokens
+            ),
+            stream=True
         )
-        async for chunk in response:
+        async for chunk in stream:
             yield chunk.text
 
     async def _stream_openai(self, system_prompt: str, user_prompt: str, max_tokens: int = 1024) -> AsyncGenerator[str, None]:

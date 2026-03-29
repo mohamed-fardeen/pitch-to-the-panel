@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 import json
+from orchestrator import sessions
 import asyncio
 
 from orchestrator import (
@@ -13,14 +14,13 @@ from orchestrator import (
     generate_3d_from_sketch,
     generate_fact_check,
     generate_rebuttal_response,
+    stream_echochamber,
     AGENTS_CONFIG
 )
 from services.llm import llm_provider
 
 app = FastAPI()
 
-# Global session storage
-sessions = {}
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,7 +42,7 @@ class EvaluationRequest(BaseModel):
 
 class ConversationAnswer(BaseModel):
     session_id: str
-    answer: str
+    message: str
     provider: str = "groq"
 
 class SummaryApproval(BaseModel):
@@ -97,40 +97,45 @@ async def approve_summary(req: SummaryApproval):
 class SkipRequest(BaseModel):
     session_id: str
 
-@app.post("/api/conversation/answer")
-async def submit_answer(req: ConversationAnswer):
+@app.post("/api/conversation/message")
+async def post_message(req: ConversationAnswer):
+    """Persistent chat input for the pitcher."""
     session = sessions.get(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    session["pending_answer"] = req.answer
-    session["events"]["answer_event"].set()
-    return {"status": "ok"}
+    # Standard flow: if we are waiting for an answer, resume.
+    # If not, it's an asynchronous 'Jump In'.
+    if session.get("waiting_for") == "answer" or session.get("waiting_for") == "pitcher_interrupt":
+        session["pending_answer"] = req.message
+        session["events"]["answer_event"].set()
+        return {"status": "ok", "mode": "resume"}
+    else:
+        # Asynchronous intervention
+        session["pending_answer"] = req.message
+        session["waiting_for"] = "pitcher_interrupt"
+        session["events"]["answer_event"].set()
+        return {"status": "ok", "mode": "interrupt"}
 
-@app.post("/api/conversation/skip")
-async def skip_turn(req: SkipRequest):
+@app.post("/api/hitl/approve")
+async def hitl_approve(req: SummaryApproval):
     session = sessions.get(req.session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(404, "Session not found")
     
-    session["pending_answer"] = "[Skipped by user - Interaction handled via Challenge Mode]"
-    session["events"]["answer_event"].set()
-    return {"status": "ok"}
+    if "hitl_data" not in session:
+        session["hitl_data"] = {}
+    
+    session["hitl_data"]["corrected_summary"] = req.corrected_summary
+    session["events"]["summary_approved"].set()
+    return {"status": "approved"}
 
-@app.post("/api/conversation/interrupt")
-async def interrupt_conversation(req: PitcherInterruptRequest):
-    session = sessions.get(req.session_id)
+@app.get("/api/session/{session_id}/blackswan")
+async def get_black_swan_report(session_id: str):
+    session = sessions.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
-    session["pending_answer"] = (
-        req.message.strip()
-        if req.message.strip()
-        else "[interrupt_signal]"
-    )
-    session["waiting_for"] = "pitcher_interrupt"
-    session["events"]["answer_event"].set()
-    return {"status": "ok"}
+    return session.get("black_swan", {"error": "Report not ready"})
 
 @app.post("/api/pitch/challenge")
 async def challenge_claim(req: ChallengeRequest):
@@ -171,6 +176,12 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
         async for event in run_round1(session_id, sessions[session_id], pitch, provider, pitcher_id, difficulty):
             if await request.is_disconnected():
                 break
+            
+            # Check for force_end signal from /api/conversation/end
+            if sessions[session_id].get("force_end"):
+                yield json.dumps({"event": "end_stream", "data": "Conversation ended by user."})
+                break
+
             yield event
     return EventSourceResponse(event_generator())
 
@@ -182,6 +193,18 @@ async def stream_pushback(request: Request, session_id: str, pushback: str, prov
                 break
             yield event
     return EventSourceResponse(event_generator())
+
+class EndConversationRequest(BaseModel):
+    session_id: str
+
+@app.post("/api/conversation/end")
+async def end_conversation(req: EndConversationRequest):
+    session = sessions.get(req.session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    session["force_end"] = True
+    session["events"]["answer_event"].set()
+    return {"status": "ending"}
 
 @app.post("/api/pitch/score")
 async def score_pitch(request: Request):

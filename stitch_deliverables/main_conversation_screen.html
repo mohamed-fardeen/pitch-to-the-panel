@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Pitch to the Panel | Digital Athenaeum</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Manrope:wght@700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-tertiary-fixed-variant": "#4a00a4",
+                        "secondary": "#d8e3fb",
+                        "on-tertiary": "#2b0065",
+                        "tertiary-fixed-dim": "#b48fff",
+                        "surface-container-low": "#091328",
+                        "surface-container": "#0f1930",
+                        "surface-variant": "#192540",
+                        "on-primary-fixed-variant": "#006b4f",
+                        "on-secondary-container": "#c5d1e8",
+                        "outline-variant": "#40485d",
+                        "surface-container-highest": "#192540",
+                        "error-dim": "#d7383b",
+                        "secondary-dim": "#cad5ed",
+                        "secondary-container": "#3c475a",
+                        "primary-fixed-dim": "#58f0bd",
+                        "on-error-container": "#ffa8a3",
+                        "on-primary-container": "#003828",
+                        "on-error": "#490006",
+                        "on-secondary": "#475266",
+                        "surface-bright": "#1f2b49",
+                        "inverse-on-surface": "#4d556b",
+                        "surface-container-high": "#141f38",
+                        "secondary-fixed": "#d8e3fb",
+                        "background": "#060e20",
+                        "primary-container": "#18c897",
+                        "tertiary-fixed": "#c0a0ff",
+                        "primary-fixed": "#68ffca",
+                        "on-tertiary-container": "#ffffff",
+                        "inverse-primary": "#006c50",
+                        "tertiary": "#af88ff",
+                        "primary": "#68ffca",
+                        "on-tertiary-fixed": "#200051",
+                        "surface-tint": "#68ffca",
+                        "tertiary-container": "#8342f4",
+                        "error": "#ff716c",
+                        "error-container": "#9f0519",
+                        "on-secondary-fixed-variant": "#515c70",
+                        "on-secondary-fixed": "#354053",
+                        "inverse-surface": "#faf8ff",
+                        "on-primary-fixed": "#004b36",
+                        "secondary-fixed-dim": "#cad5ed",
+                        "primary-dim": "#58f0bd",
+                        "surface-container-lowest": "#000000",
+                        "surface-dim": "#060e20",
+                        "on-surface": "#dee5ff",
+                        "on-surface-variant": "#a3aac4",
+                        "outline": "#6d758c",
+                        "on-primary": "#005f46",
+                        "surface": "#060e20",
+                        "tertiary-dim": "#8a4cfc",
+                        "on-background": "#dee5ff"
+                    },
+                    fontFamily: {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; background-color: #060e20; color: #dee5ff; }
+        .font-manrope { font-family: 'Manrope', sans-serif; }
+        .glass-panel {
+            background: rgba(25, 37, 64, 0.6);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        .active-speaker-glow {
+            box-shadow: 0 0 12px 2px rgba(104, 255, 202, 0.3);
+        }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #40485d; border-radius: 10px; }
+    </style>
+</head>
+<body class="flex overflow-hidden h-screen bg-background">
+<!-- SideNavBar (Execution from JSON) -->
+<aside class="fixed left-0 top-0 h-screen flex flex-col py-6 bg-[#091328] w-64 shadow-[20px_0_40px_rgba(0,0,0,0.4)] z-50">
+<div class="px-6 mb-8 flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+<span class="material-symbols-outlined text-on-primary text-sm" data-icon="menu_book">menu_book</span>
+</div>
+<div>
+<h1 class="text-lg font-black text-white font-manrope">Digital Athenaeum</h1>
+<p class="text-[10px] text-outline tracking-wider uppercase">v2.4.0-Alpha</p>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<div class="text-[#68ffca] bg-[#141f38] rounded-r-full mr-4 pl-6 py-3 border-l-4 border-[#68ffca] flex items-center gap-4 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="group">group</span>
+<span class="font-body text-sm font-medium">Panel</span>
+</div>
+<div class="text-[#40485d] pl-10 py-3 hover:text-white hover:bg-[#0f1930] transition-colors duration-200 flex items-center gap-4 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="forum">forum</span>
+<span class="font-body text-sm font-medium">Transcripts</span>
+</div>
+<div class="text-[#40485d] pl-10 py-3 hover:text-white hover:bg-[#0f1930] transition-colors duration-200 flex items-center gap-4 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="menu_book">menu_book</span>
+<span class="font-body text-sm font-medium">Library</span>
+</div>
+<div class="text-[#40485d] pl-10 py-3 hover:text-white hover:bg-[#0f1930] transition-colors duration-200 flex items-center gap-4 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="query_stats">query_stats</span>
+<span class="font-body text-sm font-medium">Analytics</span>
+</div>
+</nav>
+<div class="px-6 mb-8">
+<button class="w-full py-3 rounded-full bg-gradient-to-r from-primary to-primary-container text-on-primary-container font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined text-sm" data-icon="add">add</span>
+                New Pitch
+            </button>
+</div>
+<div class="mt-auto border-t border-outline-variant/10 pt-4 space-y-1">
+<div class="text-[#40485d] pl-10 py-3 hover:text-white flex items-center gap-4 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="help_outline">help_outline</span>
+<span class="font-body text-sm">Support</span>
+</div>
+<div class="text-[#40485d] pl-10 py-3 hover:text-white flex items-center gap-4 cursor-pointer">
+<span class="material-symbols-outlined" data-icon="person">person</span>
+<span class="font-body text-sm">Account</span>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 ml-64 flex flex-col h-screen relative">
+<!-- TopAppBar (Execution from JSON) -->
+<header class="flex justify-between items-center w-full px-8 py-4 max-w-[1920px] mx-auto bg-[#060e20] z-40 sticky top-0">
+<div class="flex items-center gap-8">
+<h2 class="text-2xl font-bold text-[#68ffca] font-manrope">Pitch to the Panel</h2>
+<!-- Model Switcher -->
+<nav class="hidden md:flex items-center bg-surface-container-low rounded-full px-1 py-1 gap-1">
+<button class="text-[#68ffca] font-bold border-b-2 border-[#68ffca] pb-1 px-4 text-xs font-label uppercase tracking-widest">Claude</button>
+<button class="text-[#40485d] hover:text-white transition-colors px-4 text-xs font-label uppercase tracking-widest">Gemini</button>
+<button class="text-[#40485d] hover:text-white transition-colors px-4 text-xs font-label uppercase tracking-widest">GPT</button>
+<button class="text-[#40485d] hover:text-white transition-colors px-4 text-xs font-label uppercase tracking-widest">Groq</button>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 text-on-surface-variant hover:bg-[#141f38]/50 transition-all duration-300 rounded-full">
+<span class="material-symbols-outlined" data-icon="history">history</span>
+</button>
+<button class="p-2 text-on-surface-variant hover:bg-[#141f38]/50 transition-all duration-300 rounded-full">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+</button>
+<div class="w-8 h-8 rounded-full overflow-hidden border-2 border-outline-variant/30">
+<img alt="User profile" class="w-full h-full object-cover" data-alt="Minimalist circular user avatar profile picture" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCK1cMXUlpPshrEpU0PHk13YjbzWFDzHQNshVwQ66qJouZi4VffN0ex_Sv38336hGmksNCy7-kOrTNtWON-FEVj61F_s8ezzJXg63S1eGlB-c23FJ6hDkrD3mXnEW85LNL41jVBpsmnr7OCKNHD9uDIleTgjTW3Gi1tbORR-p0tzVUO9ygmnhAn1gEXtOmysU6nY2NJeFrduH6ZwcZScGr28JeK2fKPOThkefgyme3EGPtIlp08DQg7a6afqhCI9BCeXbQm3Er-9bY"/>
+</div>
+</div>
+</header>
+<div class="bg-gradient-to-b from-[#091328] to-transparent h-px w-full"></div>
+<!-- Content Grid Section -->
+<div class="flex-1 flex overflow-hidden p-8 gap-8">
+<!-- Agent Grid (3x2) -->
+<div class="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 h-fit">
+<!-- Agent 1: Arjun Mehta (Active) -->
+<div class="glass-panel active-speaker-glow bg-surface-bright rounded-xl p-6 relative flex flex-col gap-4">
+<div class="flex items-start justify-between">
+<div class="w-16 h-16 rounded-2xl overflow-hidden bg-surface-container-high ring-2 ring-primary">
+<img alt="Arjun Mehta" class="w-full h-full object-cover" data-alt="Professional male avatar with beard and glasses" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBtR6ZUEsO0nh5e3c5F4dVJ0JBlOOsTpMOpB3HUXIutGeWbzjqnNII5chc3d-T1lJanFXIxHW7Ch8k5PARLmlczGoe0P6ROsuL6_DmsTO0xLCrUJx3sBOV5pTQcHb47DGluM3ca1YcVn8SMNHXY43dpYVa3xBTPtiS6nmWao3KdlGZFwPuu9RitA8fuaVCS_RaIL98lpBFHNipFh8Fr9dkySOffmBfc7vyhvW4xoRD8o9mRPgDiD6s49g1Kox-S_CyUIOHYGPGzpbA"/>
+</div>
+<div class="flex items-center gap-1.5 px-3 py-1 bg-primary/20 text-primary rounded-full animate-pulse">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<span class="text-[10px] font-bold uppercase tracking-widest">Speaking</span>
+</div>
+</div>
+<div>
+<h3 class="font-manrope text-xl font-bold text-white">Arjun Mehta</h3>
+<p class="text-xs text-primary font-medium">Skeptical VC</p>
+</div>
+</div>
+<!-- Agent 2: Priya Sharma -->
+<div class="glass-panel rounded-xl p-6 bg-surface-container-low hover:bg-surface-container transition-colors duration-300 flex flex-col gap-4">
+<div class="w-16 h-16 rounded-2xl overflow-hidden bg-surface-container-high">
+<img alt="Priya Sharma" class="w-full h-full object-cover" data-alt="Energetic female avatar with bright expression" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCLIhGNJRAkk6oCexsTIksbaGuc5yek84NUTyONy_snMjcppL0T4OgPpX7aVRcmrFu7a-toZRnUOh_uVXo_c8o-_1ONJv-QzHFXL_gWWKuJF_zYswtGG9EtsV1Re1OLBjbtMlAQAm2GCxJYd7CiCQL4xV4kYVvPrLHLQ7mXV0NRPOCO7Y3H-MrYo35KoR2h_63czgricYhHX3XcBkIQE9nqZIp8q8fJBDilKQgUly3S0WKBED8XjUPrlL2Vda9kg9qWYj-jd2mGMKQ"/>
+</div>
+<div>
+<h3 class="font-manrope text-xl font-bold text-white">Priya Sharma</h3>
+<p class="text-xs text-tertiary font-medium">Enthusiastic User</p>
+</div>
+</div>
+<!-- Agent 3: Ravi Kumar -->
+<div class="glass-panel rounded-xl p-6 bg-surface-container-low hover:bg-surface-container transition-colors duration-300 flex flex-col gap-4">
+<div class="w-16 h-16 rounded-2xl overflow-hidden bg-surface-container-high">
+<img alt="Ravi Kumar" class="w-full h-full object-cover" data-alt="Stern looking male avatar in formal wear" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDA9rJ9bpVKX63ImExk1YjXsgPGEFpCa8_3hkp4uYSr_MfRZi6N6p9pwwBEO9XlGyDW6pL6J-mmfL_jnM1NyUvPFef5H-QySFS9SXaleWnFVkEhvlbaNHaLQPfXRCcMKXmf3QOOO_RqEX1eL9q8ST-vIUPSdrAscIbXC-qdXkj-jRJqGXeKwayL0QlnpOx-qOITFCd6lRu5I9IlyD8_7LKqeYgskLaMbDj_qQ5U6ong-xMGQXWMEtBcl-EBy2PVdXWj31paz5W2BE8"/>
+</div>
+<div>
+<h3 class="font-manrope text-xl font-bold text-white">Ravi Kumar</h3>
+<p class="text-xs text-error font-medium">Hostile User</p>
+</div>
+</div>
+<!-- Agent 4: Dr. Ananya Iyer (Active) -->
+<div class="glass-panel active-speaker-glow bg-surface-bright rounded-xl p-6 relative flex flex-col gap-4">
+<div class="flex items-start justify-between">
+<div class="w-16 h-16 rounded-2xl overflow-hidden bg-surface-container-high ring-2 ring-primary">
+<img alt="Dr. Ananya Iyer" class="w-full h-full object-cover" data-alt="Sophisticated female avatar with glasses" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCgIpyi63_Q3UO_oWpAjR-VQUmdO21IL6w0s66i3knZx57QzI6MclBwDNtQZ7vweTQ1ca-t2uOdkCbVCc8iR4gWdeDudcNlwj9OgJxq3b1WvBzPHrNt5oQJTKEF9d69b-abY2MJIHApLUXqg3cFrwHzdzw3csWnd_csNFSmeHvXROA9AMbYnH_YJfFgTqq2Xi6IH-tWUpLeiTEiuc7NTVIIq19uMBXcVEnwil9NH3yyUiVeViM5GqdO3zb5Jfs4o6lgbbgih6cs6HY"/>
+</div>
+<div class="flex items-center gap-1.5 px-3 py-1 bg-primary/20 text-primary rounded-full">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<span class="text-[10px] font-bold uppercase tracking-widest">Speaking</span>
+</div>
+</div>
+<div>
+<h3 class="font-manrope text-xl font-bold text-white">Dr. Ananya Iyer</h3>
+<p class="text-xs text-primary font-medium">Domain Expert</p>
+</div>
+</div>
+<!-- Agent 5: Meera Pillai -->
+<div class="glass-panel rounded-xl p-6 bg-surface-container-low hover:bg-surface-container transition-colors duration-300 flex flex-col gap-4">
+<div class="w-16 h-16 rounded-2xl overflow-hidden bg-surface-container-high">
+<img alt="Meera Pillai" class="w-full h-full object-cover" data-alt="Skeptical female avatar with analytical gaze" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDaePnM67ed2DtEJlJ4lq9DcWqgevzjbNibPsaDONjAPT-9a_C1ubwQ9dGQoOfEYiCx7rvkSvxpGiLJkd5g438RPeSLMXsAso_EhqLq1xxFY3_vc1tWw8BmcFLPG38SQoQUNj4jDvp4iTpOsyv-zflFIFiLDGCaQnpci-EyjHr7ydcD434Q5IAK0vucRzWvMt-BPHbqIMkvm6uth5RKxxX_k5-RN3Q1gXEjFOih4RhHRjTCkW64HMMR3E0VwlfYiRDT2vOlHGf-W7Q"/>
+</div>
+<div>
+<h3 class="font-manrope text-xl font-bold text-white">Meera Pillai</h3>
+<p class="text-xs text-secondary-dim font-medium">Competitor's Customer</p>
+</div>
+</div>
+<!-- Agent 6: Kiran -->
+<div class="glass-panel rounded-xl p-6 bg-surface-container-low hover:bg-surface-container transition-colors duration-300 flex flex-col gap-4">
+<div class="w-16 h-16 rounded-2xl overflow-hidden bg-surface-container-high">
+<img alt="Kiran" class="w-full h-full object-cover" data-alt="Younger male avatar with a curious expression" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD_KMuF8BBl22oE8jK2p930ErfMV0H90YTeNS1ltIxiK7-041_rqvlHp-Lk54Qr1mUwObAFpd25jjgUQVkhfcD9qJg377LXESUNnicHtZOtppO_399mMYvPDbB8ydTMykFAEwRpd4l3KFWRQ1mXtYyr4OwmC1brPHixJzZiG-QmIJvJFdGCRYgh7fMsI2n5ANtevqBV8GQq7ZfFFEl6TTch1qN5fkwyrteBm9-AQ5bgAiZO790dRTxtwiOMqeWLSK-sy4zfieHXc3M"/>
+</div>
+<div>
+<h3 class="font-manrope text-xl font-bold text-white">Kiran</h3>
+<p class="text-xs text-on-surface-variant font-medium">Confused First-Timer</p>
+</div>
+</div>
+</div>
+<!-- Conversation Panel (Right) -->
+<div class="w-[450px] flex flex-col bg-surface-container-low rounded-xl overflow-hidden border border-outline-variant/10">
+<div class="p-6 border-b border-outline-variant/10 flex items-center justify-between">
+<h4 class="font-manrope font-bold text-lg">Live Transcript</h4>
+<span class="text-[10px] font-label uppercase tracking-widest bg-surface-container px-2 py-1 rounded">Real-time Synthesis</span>
+</div>
+<div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+<!-- Message 1 -->
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm" data-icon="token">token</span>
+<span class="text-xs font-bold font-label uppercase tracking-tighter text-on-surface-variant">Arjun Mehta</span>
+</div>
+<div class="bg-surface-container rounded-r-2xl rounded-bl-2xl p-4 text-sm leading-relaxed border-l-2 border-primary/40">
+                            The unit economics just don't seem to scale. How are you accounting for the 40% churn in your primary demographic?
+                        </div>
+</div>
+<!-- Message 2 -->
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-tertiary text-sm" data-icon="psychology">psychology</span>
+<span class="text-xs font-bold font-label uppercase tracking-tighter text-on-surface-variant">Dr. Ananya Iyer</span>
+</div>
+<div class="bg-surface-container rounded-r-2xl rounded-bl-2xl p-4 text-sm leading-relaxed border-l-2 border-tertiary/40">
+                            Actually, if we look at the underlying protocol, the churn Arjun is referencing might be offset by the high LTV of the enterprise segment.
+                        </div>
+</div>
+<!-- Message 3 -->
+<div class="flex flex-col gap-2 opacity-60">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-error text-sm" data-icon="report">report</span>
+<span class="text-xs font-bold font-label uppercase tracking-tighter text-on-surface-variant">Ravi Kumar</span>
+</div>
+<div class="bg-surface-container rounded-r-2xl rounded-bl-2xl p-4 text-sm leading-relaxed border-l-2 border-error/40">
+                            I've used similar tools and they all fail the same way. What makes you think this is any different?
+                        </div>
+</div>
+<!-- Message 4 (Incoming) -->
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm" data-icon="token">token</span>
+<span class="text-xs font-bold font-label uppercase tracking-tighter text-on-surface-variant">Arjun Mehta</span>
+</div>
+<div class="bg-surface-container rounded-r-2xl rounded-bl-2xl p-4 text-sm leading-relaxed border-l-2 border-primary/40">
+                            Valid point, Ravi. But let's look at the proprietary data layer they mentioned in the pitch deck...
+                        </div>
+</div>
+</div>
+<div class="p-4 bg-surface-container-high/50">
+<div class="h-8 flex items-center gap-2 px-3">
+<div class="w-1.5 h-1.5 rounded-full bg-primary animate-bounce"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary animate-bounce [animation-delay:0.2s]"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary animate-bounce [animation-delay:0.4s]"></div>
+<span class="text-[10px] text-on-surface-variant font-label uppercase">Arjun is typing</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Bottom Action -->
+<div class="absolute bottom-12 left-1/2 -translate-x-1/2 z-50">
+<button class="flex items-center gap-3 px-8 py-4 rounded-full bg-gradient-to-br from-primary to-primary-container text-on-primary-container font-manrope font-extrabold text-lg shadow-[0_20px_40px_rgba(104,255,202,0.3)] hover:scale-105 active:scale-95 transition-all duration-300 group">
+<span class="material-symbols-outlined text-2xl group-hover:rotate-12 transition-transform" data-icon="back_hand" style="font-variation-settings: 'FILL' 1;">back_hand</span>
+                JUMP IN
+            </button>
+</div>
+<!-- Ambient Glow Elements -->
+<div class="absolute top-1/4 -left-24 w-96 h-96 bg-primary/10 blur-[120px] pointer-events-none"></div>
+<div class="absolute bottom-0 -right-24 w-[500px] h-[500px] bg-tertiary/5 blur-[120px] pointer-events-none"></div>
+</main>
+</body></html>
