@@ -38,3 +38,8 @@ tmp/
 # App Specific
 backend/db/pitch_memory.db
 frontend/public/charts/
+
+# Exclusions for V4
+image/
+implementation_plan/
+stitch_deliverables/
