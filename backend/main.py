@@ -7,7 +7,6 @@ from orchestrator import sessions
 import asyncio
 
 from orchestrator import (
-    run_round1, 
     handle_verdict_pushback,
     get_scoring_radar, 
     save_pitcher_memory, 
@@ -104,18 +103,14 @@ async def post_message(req: ConversationAnswer):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    # Standard flow: if we are waiting for an answer, resume.
-    # If not, it's an asynchronous 'Jump In'.
-    if session.get("waiting_for") == "answer" or session.get("waiting_for") == "pitcher_interrupt":
-        session["pending_answer"] = req.message
+    session["pending_answer"] = req.message
+    session["pitcher_interrupt"] = True
+    session["pitcher_message"] = req.message
+    
+    if "events" in session and "answer_event" in session["events"]:
         session["events"]["answer_event"].set()
-        return {"status": "ok", "mode": "resume"}
-    else:
-        # Asynchronous intervention
-        session["pending_answer"] = req.message
-        session["waiting_for"] = "pitcher_interrupt"
-        session["events"]["answer_event"].set()
-        return {"status": "ok", "mode": "interrupt"}
+        
+    return {"status": "ok"}
 
 @app.post("/api/hitl/approve")
 async def hitl_approve(req: SummaryApproval):
@@ -155,34 +150,39 @@ async def submit_rebuttal(req: RebuttalRequest):
 
 @app.get("/api/stream/main")
 async def main_stream(request: Request, session_id: str, pitch: str, provider: str = "groq", pitcher_id: str = None, difficulty: str = "standard"):
-    """The core unified stream for v1 hybrid conversation."""
+    """The core unified stream calling the LangGraph orchestrator."""
     if session_id not in sessions:
         sessions[session_id] = {
+            "session_id": session_id,
+            "pitch_summary": pitch,
+            "domain": {},
             "events": {
-                "summary_approved": asyncio.Event(),
                 "answer_event": asyncio.Event()
             },
-            "hitl_data": {},
             "pitcher_id": pitcher_id,
-            "conversation": [],
             "pending_answer": "",
-            "waiting_for": None,
-            "phase": "setup",
+            "pitcher_interrupt": False,
+            "pitcher_message": "",
+            "force_end": False,
+            "conversation": [],
             "difficulty": difficulty or "standard",
             "provider": provider or "groq"
         }
     
     async def event_generator():
-        async for event in run_round1(session_id, sessions[session_id], pitch, provider, pitcher_id, difficulty):
-            if await request.is_disconnected():
-                break
-            
-            # Check for force_end signal from /api/conversation/end
-            if sessions[session_id].get("force_end"):
-                yield json.dumps({"event": "end_stream", "data": "Conversation ended by user."})
-                break
+        try:
+            async for event in stream_echochamber(session_id, sessions[session_id], provider, difficulty):
+                if await request.is_disconnected():
+                    break
+                
+                if sessions[session_id].get("force_end"):
+                    yield json.dumps({"event": "end_stream", "data": "Conversation ended by user."})
+                    break
 
-            yield event
+                yield event
+        except Exception as e:
+            yield json.dumps({"event": "error", "data": str(e)})
+            
     return EventSourceResponse(event_generator())
 
 @app.get("/api/stream/pushback")

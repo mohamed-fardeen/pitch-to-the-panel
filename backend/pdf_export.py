@@ -26,7 +26,7 @@ async def generate_pdf_report(session: dict) -> bytes:
                                    backColor=HexColor('#1E3A5F'), 
                                    spaceAfter=6, spaceBefore=0,
                                    leftIndent=10, rightIndent=10)
-    content.append(Paragraph("PITCH TO THE PANEL — Evaluation Report", header_style))
+    content.append(Paragraph("EchoChamber AI — Focus Group Analysis Report", header_style))
     content.append(Spacer(1, 10))
     
     # Pitch summary
@@ -45,6 +45,9 @@ async def generate_pdf_report(session: dict) -> bytes:
             chart_img = io.BytesIO(chart_data)
             content.append(Image(chart_img, width=80*mm, height=80*mm))
             content.append(Spacer(1, 6))
+            content.append(Paragraph("Scores reflect panel evaluation based on responses and reasoning.", 
+                                      ParagraphStyle('chart_cap', fontSize=9, textColor=gray, alignment=1)))
+            content.append(Spacer(1, 10))
     
     # Agent responses summary
     content.append(Paragraph("What the panel said:", 
@@ -53,8 +56,18 @@ async def generate_pdf_report(session: dict) -> bytes:
     
     agent_data = []
     for turn in session.get("conversation", []):
-         if turn.get("type") in ["question", "reaction", "interrupt_q"]:
-             agent_name = turn.get("agent_name", "Panelist")
+         turn_type = turn.get("type", "")
+         if turn_type in ["question", "reaction", "interrupt_q", "persona_response", "debate", "rebuttal", "answer"] or (turn.get("agent_name") and "system" not in turn.get("agent_name", "").lower()):
+             agent_id = turn.get("agent_id")
+             raw_name = turn.get("agent_name", "Panelist")
+             
+             role = ""
+             if agent_id and agent_id in AGENTS_CONFIG:
+                 base_role = AGENTS_CONFIG[agent_id].get("role", "")
+                 if base_role:
+                     role = f" ({base_role})"
+             agent_name = f"{raw_name}{role}"
+             
              response = turn.get("content", "")
              if len(response) > 500: response = response[:500] + "..."
              agent_data.append([
@@ -72,6 +85,18 @@ async def generate_pdf_report(session: dict) -> bytes:
         ]))
         content.append(t)
         content.append(Spacer(1, 10))
+    
+    # Key Insights
+    content.append(Paragraph("Key Insights from Panel", 
+                              ParagraphStyle('section', fontSize=12, textColor=brand, spaceBefore=8, spaceAfter=4)))
+    
+    key_insights = session.get("key_insights", [])
+    if not key_insights:
+        key_insights = ["No key insights generated."]
+            
+    for ins in key_insights:
+        content.append(Paragraph(ins, ParagraphStyle('insight_bullet', fontSize=10, textColor=dark, leftIndent=10, spaceAfter=2)))
+    content.append(Spacer(1, 10))
     
     # Verdict
     parts = session.get("verdict_parts", {})
@@ -101,6 +126,26 @@ async def generate_pdf_report(session: dict) -> bytes:
                 ]))
                 content.append(vt)
                 content.append(Spacer(1, 4))
+                
+    # Black Swan
+    if session.get("black_swan"):
+        bs = session["black_swan"]
+        content.append(Spacer(1, 6))
+        content.append(Paragraph("Black Swan Insight", 
+                                  ParagraphStyle('section', fontSize=12, textColor=brand, spaceBefore=8, spaceAfter=4)))
+        
+        finding_text = f"<b>Finding:</b> {bs.get('black_swan_finding', '')}"
+        content.append(Paragraph(finding_text, ParagraphStyle('bs_body', fontSize=10, textColor=dark, spaceAfter=4)))
+        
+        evidence_text = f"<b>Evidence:</b> {bs.get('evidence', '')}"
+        content.append(Paragraph(evidence_text, ParagraphStyle('bs_body', fontSize=10, textColor=dark, spaceAfter=6)))
+        
+        pivots = bs.get('pivots', [])
+        if pivots:
+            content.append(Paragraph("<b>Potential Pivots:</b>", ParagraphStyle('bs_body', fontSize=10, textColor=dark, spaceAfter=2)))
+            for pivot in pivots:
+                content.append(Paragraph(f"• {pivot}", ParagraphStyle('bs_bullet', fontSize=10, textColor=dark, leftIndent=10, spaceAfter=2)))
+        content.append(Spacer(1, 10))
     
     doc.build(content)
     buffer.seek(0)

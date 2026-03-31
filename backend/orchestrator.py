@@ -274,57 +274,129 @@ async def interviewer_node(state: FocusGroupState):
     new_turn = {
         "type": "interviewer_question",
         "agent_id": "interviewer",
-        "agent_name": AGENTS_CONFIG["interviewer"]["name"],
+        "agent_name": AGENTS_CONFIG.get("interviewer", {"name": "The Interviewer"})["name"],
         "content": question,
         "research_note": research_note,
         "directed_at": directed_at
     }
     
+    active_panel = state.get("domain", {}).get("active_panel", ["vc", "hostile", "enthusiastic"])
+    remaining_personas = [pid for pid in active_panel if pid != directed_at][:2]
+    remaining_personas.insert(0, directed_at)
+
     return {
         "conversation": [new_turn],
         "current_question": question,
         "directed_at": directed_at,
-        "turn_count": state["turn_count"] + 1,
-        "should_invite_pitcher": (state["turn_count"] + 1) % 4 == 0
+        "turn_count": state.get("turn_count", 0) + 1,
+        "should_invite_pitcher": (state.get("turn_count", 0) + 1) % 4 == 0,
+        "remaining_personas": remaining_personas
     }
+
+def map_ocean_to_behavior(profile: dict) -> str:
+    behaviors = []
+    openness = profile.get("openness", 0.5)
+    agreeableness = profile.get("agreeableness", 0.5)
+    neuroticism = profile.get("neuroticism", 0.5)
+    
+    if openness > 0.7:
+        behaviors.append("explores ideas and speculates")
+    elif openness < 0.3:
+        behaviors.append("prefers proven ideas")
+        
+    if agreeableness < 0.3:
+        behaviors.append("direct and confrontational")
+    elif agreeableness > 0.7:
+        behaviors.append("supportive and cooperative")
+        
+    if neuroticism > 0.7:
+        behaviors.append("risk-sensitive and cautious")
+    elif neuroticism < 0.3:
+        behaviors.append("calm and confident")
+        
+    return ", ".join(behaviors) if behaviors else "neutral and analytical"
 
 async def persona_response_node(state: FocusGroupState):
     """A persona responds to the interviewer or another persona."""
-    agent_id = state["directed_at"]
-    agent_config = AGENTS_CONFIG.get(agent_id, AGENTS_CONFIG["vc"])
+    session = sessions.get(state["session_id"], {})
+    
+    if session.get("force_end") or state.get("force_end"):
+        return {"session_complete": True}
+        
+    if session.get("pitcher_interrupt") or state.get("pitcher_interrupt"):
+        msg = session.get("pitcher_message", state.get("pitcher_message", ""))
+        
+        if "pitcher_interrupt" in session:
+            session["pitcher_interrupt"] = False
+            session["pitcher_message"] = ""
+            
+        new_turn = {
+            "type": "pitcher_interrupt",
+            "agent_name": "Pitcher",
+            "content": msg
+        }
+        
+        return {
+            "conversation": [new_turn],
+            "pitcher_interrupt": False,
+            "pitcher_message": ""
+        }
+        
+    remaining = state.get("remaining_personas", [])
+    if remaining:
+        agent_id = remaining[0]
+        new_remaining = remaining[1:]
+    else:
+        agent_id = state.get("directed_at", "vc")
+        new_remaining = []
+        
+    agent_config = AGENTS_CONFIG.get(agent_id, AGENTS_CONFIG.get("vc", {}))
     persona_anchor = PERSONA_ANCHORS.get(agent_id, "")
-    ocean = OCEAN_PROFILES.get(agent_id, OCEAN_PROFILES["vc"])
+    ocean = OCEAN_PROFILES.get(agent_id, OCEAN_PROFILES.get("vc", {}))
+    
+    behavior_text = map_ocean_to_behavior(ocean)
+    
+    recent_discussion = "Recent panel discussion:\n"
+    recent_turns = [t for t in state.get("conversation", []) if t.get("type") == "persona_response"][-3:]
+    if recent_turns:
+        for t in recent_turns:
+            recent_discussion += f" {t.get('agent_name', 'Unknown')}: {t.get('content', '')}\n"
+    else:
+        recent_discussion += " No prior responses yet.\n"
     
     prompt = PERSONA_FOCUS_GROUP_PROMPT.format(
         persona_anchor=persona_anchor,
-        openness=ocean["openness"],
-        conscientiousness=ocean["conscientiousness"],
-        extraversion=ocean["extraversion"],
-        agreeableness=ocean["agreeableness"],
-        neuroticism=ocean["neuroticism"],
-        core_bias=ocean["core_bias"],
-        hidden_objection=ocean["hidden_objection"],
-        episodic_memory=ocean["episodic_memory"],
-        pitch_summary=state["pitch_summary"],
-        question=state["current_question"],
-        conversation_so_far=build_conversation_context({"conversation": state["conversation"]}),
-        difficulty_instruction=DIFFICULTY_MODIFIERS.get(state["difficulty"], DIFFICULTY_MODIFIERS["standard"])["reaction"]
+        behavior=behavior_text,
+        core_bias=ocean.get("core_bias", ""),
+        hidden_objection=ocean.get("hidden_objection", ""),
+        episodic_memory=ocean.get("episodic_memory", ""),
+        pitch_summary=state.get("pitch_summary", ""),
+        question=state.get("current_question", ""),
+        recent_discussion=recent_discussion,
+        conversation_so_far=build_conversation_context({"conversation": state.get("conversation", [])}),
+        difficulty_instruction=DIFFICULTY_MODIFIERS.get(state.get("difficulty", "standard"), DIFFICULTY_MODIFIERS["standard"])["reaction"]
     )
     
     response = await llm_provider.generate_response(
-        "Respond as the persona.", prompt, state["provider"], stream=False
+        "Respond as the persona.", prompt, state.get("provider", "gemini"), stream=False
     )
     
     new_turn = {
         "type": "persona_response",
         "agent_id": agent_id,
-        "agent_name": agent_config["name"],
+        "agent_name": agent_config.get("name", agent_id),
         "content": response
     }
     
+    debate_rounds = state.get("debate_rounds", 0)
+    if state.get("debate_rounds", 0) > 0 or state.get("conflict_detected"):
+        debate_rounds += 1
+        
     return {
         "conversation": [new_turn],
-        "last_two_responses": (state["last_two_responses"] + [new_turn])[-2:]
+        "last_two_responses": (state.get("last_two_responses", []) + [new_turn])[-2:],
+        "remaining_personas": new_remaining,
+        "debate_rounds": debate_rounds
     }
 
 async def conflict_router_node(state: FocusGroupState):
@@ -358,30 +430,33 @@ async def conflict_router_node(state: FocusGroupState):
 
 async def debate_engine_node(state: FocusGroupState):
     """Pits two personas against each other."""
-    debater_a_id = state["debater_a"] or "vc"
-    debater_b_id = state["debater_b"] or "hostile"
+    debater_a_id = state.get("debater_a") or "vc"
+    debater_b_id = state.get("debater_b") or "hostile"
     
-    # Get their previous positions from last_two_responses
-    # But for robustness, just use the IDs and topic
+    last_two = state.get("last_two_responses", [])
+    persona_a_name = last_two[0].get("agent_name")
+    persona_a_response = last_two[0].get("content")
+    persona_b_name = last_two[1].get("agent_name")
+    persona_b_response = last_two[1].get("content")
     
     prompt = DEBATE_ENGINE_PROMPT.format(
-        persona_a_name=AGENTS_CONFIG.get(debater_a_id, {"name": debater_a_id})["name"],
-        persona_a_response="[Previous point]",
-        persona_b_name=AGENTS_CONFIG.get(debater_b_id, {"name": debater_b_id})["name"],
-        persona_b_response="[Contradicting point]",
-        conflict_topic=state["conflict_topic"],
-        pitch_summary=state["pitch_summary"],
-        difficulty_instruction=DIFFICULTY_MODIFIERS.get(state["difficulty"], DIFFICULTY_MODIFIERS["standard"])["question"]
+        persona_a_name=persona_a_name,
+        persona_a_response=persona_a_response,
+        persona_b_name=persona_b_name,
+        persona_b_response=persona_b_response,
+        conflict_topic=state.get("conflict_topic", ""),
+        pitch_summary=state.get("pitch_summary", ""),
+        difficulty_instruction=DIFFICULTY_MODIFIERS.get(state.get("difficulty", "standard"), DIFFICULTY_MODIFIERS["standard"])["question"]
     )
     
     question = await llm_provider.generate_response(
-        "Moderator: ask the debate question.", prompt, state["provider"], stream=False
+        "Moderator: ask the debate question.", prompt, state.get("provider", "gemini"), stream=False
     )
     
     new_turn = {
         "type": "debate_interjection",
         "agent_id": "interviewer",
-        "agent_name": AGENTS_CONFIG["interviewer"]["name"],
+        "agent_name": AGENTS_CONFIG.get("interviewer", {"name": "The Interviewer"})["name"],
         "content": question
     }
     
@@ -389,7 +464,8 @@ async def debate_engine_node(state: FocusGroupState):
         "conversation": [new_turn],
         "current_question": question,
         "directed_at": debater_a_id,
-        "conflict_detected": False # Reset after triggering
+        "conflict_detected": False,
+        "debate_rounds": 0
     }
 
 async def hallucination_guard_node(state: FocusGroupState):
@@ -461,6 +537,10 @@ async def invite_pitcher_node(state: FocusGroupState):
 
 async def check_completion_node(state: FocusGroupState):
     """Checks if the session should end."""
+    session = sessions.get(state["session_id"], {})
+    if session.get("force_end") or state.get("force_end"):
+        return {"session_complete": True}
+        
     return {
         "session_complete": state["turn_count"] >= 12
     }
@@ -588,6 +668,16 @@ async def stream_meta_analysis(session_id: str, session: dict, provider: str):
         yield sse_event("black_swan_report", report)
     except Exception as e:
         yield sse_event("error", {"message": f"Meta-analysis failed: {str(e)}"})
+    
+    # Generate Key Insights
+    sys_prompt = "You are an expert analyst. Extract exactly 3 key insights from the panel discussion. Focus on: repeated concerns, strongest validation, major objections. Return exactly 3 short bullet points starting with a bullet character (•)."
+    try:
+        insights_raw = await llm_provider.generate_response(
+            sys_prompt, transcript, provider, stream=False
+        )
+        session["key_insights"] = [i.strip() for i in insights_raw.split('\\n') if i.strip()]
+    except Exception:
+        session["key_insights"] = ["No insights available."]
     
     # Complete
     session["phase"] = "verdict"

@@ -282,12 +282,7 @@ Researcher note: [Why you asked this —
 PERSONA_FOCUS_GROUP_PROMPT = """
 {persona_anchor}
 
-OCEAN PROFILE:
-- Openness: {openness}
-- Conscientiousness: {conscientiousness}  
-- Extraversion: {extraversion}
-- Agreeableness: {agreeableness}
-- Neuroticism: {neuroticism}
+Behavior Description: {behavior}
 
 CORE BIAS: {core_bias}
 HIDDEN OBJECTION: {hidden_objection}
@@ -299,26 +294,28 @@ You are in a focus group about this pitch:
 The Interviewer just asked you:
 {question}
 
+{recent_discussion}
+
 Full conversation so far:
 {conversation_so_far}
 
 {difficulty_instruction}
 
 Respond as yourself — not as a generic 
-evaluator. Your OCEAN profile shapes HOW 
+evaluator. Your behavior description shapes HOW 
 you respond. Your hidden objection is the 
 lens you see everything through.
 
-Your episodic memory is real to you — 
-reference it when relevant.
+If your past experience is relevant, 
+refer to it naturally in your response.
 
 RESPONSE RULES:
-- 2-3 sentences maximum
+- 2-4 sentences. Be concise but natural.
 - Speak directly, in character
-- If another persona said something you 
-  disagree with, say so by name
-- End with your core concern if it has 
-  not been addressed yet
+- You MUST reference at least one other persona’s statement if any exist. Mention them by name and respond directly.
+- If you disagree with another persona, say so clearly using their name and explain why.
+- If your hidden objection is triggered by the discussion, you MUST raise it explicitly.
+- End with your core concern if it has not been addressed yet
 - Never break character
 """
 

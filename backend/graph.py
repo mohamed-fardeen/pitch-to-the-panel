@@ -28,10 +28,14 @@ class FocusGroupState(TypedDict):
     # Pitcher state
     pitcher_message_pending: bool
     pitcher_message: str
+    pitcher_interrupt: bool
     
     # Control
+    force_end: bool
     should_invite_pitcher: bool
     session_complete: bool
+    remaining_personas: List[str]
+    debate_rounds: int
     
     # Flagged claims
     flagged_claims: Annotated[List[dict], operator.add]
@@ -64,10 +68,27 @@ def build_focus_group_graph(
     
     # Fixed edges
     workflow.add_edge("interviewer", "persona_response")
-    workflow.add_edge("persona_response", "hallucination_guard")
     workflow.add_edge("hallucination_guard", "conflict_router")
-    workflow.add_edge("debate_engine", "persona_response")
     workflow.add_edge("invite_pitcher", "interviewer")
+    
+    # Conditional edges
+    workflow.add_conditional_edges(
+        "persona_response",
+        route_after_persona,
+        {
+            "persona_response": "persona_response",
+            "hallucination_guard": "hallucination_guard"
+        }
+    )
+    
+    workflow.add_conditional_edges(
+        "debate_engine",
+        route_after_debate,
+        {
+            "continue_debate": "persona_response",
+            "end_debate": "conflict_router"
+        }
+    )
     
     # Conditional edges
     workflow.add_conditional_edges(
@@ -93,8 +114,20 @@ def build_focus_group_graph(
 
 def route_after_conflict(state: FocusGroupState):
     if state.get("conflict_detected"):
-        return "debate"
+        last_two = state.get("last_two_responses", [])
+        if len(last_two) >= 2:
+            return "debate"
     return "continue"
+
+def route_after_persona(state: FocusGroupState):
+    if state.get("remaining_personas"):
+        return "persona_response"
+    return "hallucination_guard"
+
+def route_after_debate(state: FocusGroupState):
+    if state.get("debate_rounds", 0) < 2:
+        return "continue_debate"
+    return "end_debate"
 
 def route_after_check(state: FocusGroupState):
     if state.get("session_complete"):
