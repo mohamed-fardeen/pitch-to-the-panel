@@ -14,7 +14,8 @@ export function Header({ provider, setProvider, disabled }: HeaderProps) {
     { label: "CLAUDE", id: "anthropic" },
     { label: "GEMINI", id: "gemini" },
     { label: "GPT", id: "openai" },
-    { label: "GROQ", id: "groq" }
+    { label: "GROQ", id: "groq" },
+    { label: "OLLAMA", id: "ollama" }
   ];
 
   return (

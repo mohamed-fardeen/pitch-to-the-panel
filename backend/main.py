@@ -29,6 +29,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import re
+
+def sanitize_pitch_input(text: str) -> str:
+    """
+    Cleans user pitch input before it enters any prompt.
+    - Strips HTML tags
+    - Removes prompt injection patterns
+    - Normalizes whitespace
+    - Truncates to safe length
+    """
+    if not text or not isinstance(text, str):
+        raise ValueError("Pitch must be a non-empty string")
+
+    # Strip HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+
+    # Remove common prompt injection patterns
+    injection_patterns = [
+        r'ignore (all |previous |above )?instructions?',
+        r'you are now',
+        r'new persona',
+        r'forget (everything|all)',
+        r'system prompt',
+        r'\\n\\n(human|assistant|system):',
+        r'<|im_start|>',
+        r'<|im_end|>',
+    ]
+    for pattern in injection_patterns:
+        text = re.sub(pattern, '[removed]', text, flags=re.IGNORECASE)
+
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    # Truncate to 1500 characters — enough for any real pitch
+    if len(text) > 1500:
+        text = text[:1500] + "..."
+
+    return text
+
 class PitchRequest(BaseModel):
     pitch_transcript: str
     session_id: str | None = None
@@ -89,41 +128,65 @@ async def approve_summary(req: SummaryApproval):
     session = sessions.get(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    session["hitl_data"]["corrected_summary"] = req.corrected_summary
-    session["events"]["summary_approved"].set()
-    return {"status": "ok"}
-
-class SkipRequest(BaseModel):
-    session_id: str
-
-@app.post("/api/conversation/message")
-async def post_message(req: ConversationAnswer):
-    """Persistent chat input for the pitcher."""
-    session = sessions.get(req.session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    session["pending_answer"] = req.message
-    session["pitcher_interrupt"] = True
-    session["pitcher_message"] = req.message
-    
-    if "events" in session and "answer_event" in session["events"]:
-        session["events"]["answer_event"].set()
-        
-    return {"status": "ok"}
-
-@app.post("/api/hitl/approve")
-async def hitl_approve(req: SummaryApproval):
-    session = sessions.get(req.session_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
     
     if "hitl_data" not in session:
         session["hitl_data"] = {}
     
     session["hitl_data"]["corrected_summary"] = req.corrected_summary
     session["events"]["summary_approved"].set()
-    return {"status": "approved"}
+    return {"status": "ok"}
+
+@app.post("/api/conversation/message")
+async def post_message(req: ConversationAnswer):
+    session = sessions.get(req.session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+
+    message = (req.message or "").strip()[:800]
+
+    if "events" not in session:
+        session["events"] = {
+            "answer_event": asyncio.Event(),
+            "summary_approved": asyncio.Event()
+        }
+
+    session["pending_answer"] = message
+
+    # ✅ NORMAL ANSWER FLOW
+    if session.get("awaiting_user_input"):
+        session["awaiting_user_input"] = False
+        session["input_type"] = "answer"
+
+        print(f"[API] answer received: {message}")
+
+        event = session["events"]["answer_event"]
+        if not event.is_set():
+            event.set()
+
+        return {"status": "answer_received"}
+
+    # ✅ INTERRUPT FLOW
+    session["pitcher_interrupt"] = True
+    session["pitcher_message"] = message
+    session["input_type"] = "interrupt"
+
+    print(f"[API] interrupt: {message}")
+
+    return {"status": "interrupt_triggered"}
+
+@app.get("/api/agents")
+async def get_agents():
+    """Returns the active agent configuration for the frontend to consume."""
+    return {
+        agent_id: {
+            "id": agent_id,
+            "name": config["name"],
+            "role": config["role"]
+        }
+        for agent_id, config in AGENTS_CONFIG.items()
+        if agent_id != "interviewer"  # exclude internal agents if desired
+    }
+
 
 @app.get("/api/session/{session_id}/blackswan")
 async def get_black_swan_report(session_id: str):
@@ -150,23 +213,46 @@ async def submit_rebuttal(req: RebuttalRequest):
 
 @app.get("/api/stream/main")
 async def main_stream(request: Request, session_id: str, pitch: str, provider: str = "groq", pitcher_id: str = None, difficulty: str = "standard"):
+    # Validate inputs before anything else
+    if not pitch or not pitch.strip():
+        async def empty_error():
+            yield json.dumps({"event": "error", "data": "Pitch cannot be empty"})
+        return EventSourceResponse(empty_error())
+
+    try:
+        pitch = sanitize_pitch_input(pitch)
+    except ValueError as e:
+        async def validation_error():
+            yield json.dumps({"event": "error", "data": str(e)})
+        return EventSourceResponse(validation_error())
+
+    if difficulty not in ["gentle", "standard", "brutal"]:
+        difficulty = "standard"
+
+    if provider not in ["groq", "anthropic", "gemini", "ollama"]:
+        provider = "ollama"
+
     """The core unified stream calling the LangGraph orchestrator."""
     if session_id not in sessions:
         sessions[session_id] = {
             "session_id": session_id,
             "pitch_summary": pitch,
             "domain": {},
+            "hitl_data": {},
             "events": {
-                "answer_event": asyncio.Event()
+                "answer_event": asyncio.Event(),
+                "summary_approved": asyncio.Event()
             },
-            "pitcher_id": pitcher_id,
             "pending_answer": "",
             "pitcher_interrupt": False,
             "pitcher_message": "",
-            "force_end": False,
+            "input_type": "",
             "conversation": [],
-            "difficulty": difficulty or "standard",
-            "provider": provider or "groq"
+            "difficulty": difficulty,
+            "provider": provider,
+            "awaiting_pitch_confirmation": False,
+            "awaiting_user_input": False,
+            "refined_pitch": ""
         }
     
     async def event_generator():
@@ -175,10 +261,6 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
                 if await request.is_disconnected():
                     break
                 
-                if sessions[session_id].get("force_end"):
-                    yield json.dumps({"event": "end_stream", "data": "Conversation ended by user."})
-                    break
-
                 yield event
         except Exception as e:
             yield json.dumps({"event": "error", "data": str(e)})
@@ -202,8 +284,13 @@ async def end_conversation(req: EndConversationRequest):
     session = sessions.get(req.session_id)
     if not session:
         raise HTTPException(404, "Session not found")
-    session["force_end"] = True
-    session["events"]["answer_event"].set()
+    
+    # In agentic v4, we signal the controller to end the session
+    session["action"] = "end_session"
+    
+    if "events" in session and "answer_event" in session["events"]:
+        session["events"]["answer_event"].set()
+        
     return {"status": "ending"}
 
 @app.post("/api/pitch/score")

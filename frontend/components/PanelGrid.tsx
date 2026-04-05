@@ -27,10 +27,22 @@ const ALL_AGENTS = {
 };
 
 export function PanelGrid({ panelState, onChallenge, factChecks, challengingAgentId, activeHosts }: PanelGridProps) {
-  // If panelState is empty, we show a default selection (standard panel)
+  const [agentsList, setAgentsList] = React.useState<any[]>([]);
+
+  React.useEffect(() => {
+    fetch("http://localhost:8000/api/agents")
+      .then(res => res.json())
+      .then(data => {
+        setAgentsList(Object.values(data));
+      })
+      .catch(() => {
+        setAgentsList(Object.values(ALL_AGENTS));
+      });
+  }, []);
+
   const activeKeys = Object.keys(panelState).length > 0 
     ? Object.keys(panelState).filter(k => k !== 'pitcher') 
-    : ["interviewer", "vc", "enthusiastic", "hostile", "expert", "competitor", "beginner"];
+    : (agentsList.length > 0 ? agentsList.map(a => a.id) : ["interviewer", "vc", "enthusiastic", "hostile", "expert", "competitor", "beginner"]);
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-2 overflow-y-auto custom-scrollbar h-full max-h-[calc(100vh-250px)]">
@@ -48,7 +60,6 @@ export function PanelGrid({ panelState, onChallenge, factChecks, challengingAgen
             role={state.role || agent.role}
             status={state.status}
             text={state.text}
-            isHost={!!isHost}
             isChallenged={!!isChallenged}
           />
         );

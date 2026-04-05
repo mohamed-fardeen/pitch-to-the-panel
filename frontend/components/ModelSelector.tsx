@@ -2,7 +2,7 @@
 
 import React from "react";
 
-export type Provider = "anthropic" | "gemini" | "openai" | "groq";
+export type Provider = "anthropic" | "gemini" | "openai" | "groq" | "ollama";
 
 interface ModelSelectorProps {
   currentProvider: Provider;
@@ -16,6 +16,7 @@ export function ModelSelector({ currentProvider, onChange, disabled }: ModelSele
     { id: "gemini", label: "Gemini" },
     { id: "openai", label: "GPT" },
     { id: "groq", label: "Groq" },
+    { id: "ollama", label: "Ollama" },
   ];
 
   return (

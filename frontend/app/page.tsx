@@ -10,6 +10,10 @@ import { LiveFeed } from "../components/LiveFeed";
 import { AgentCard } from "../components/AgentCard";
 import { VerdictCard } from "../components/VerdictCard";
 import { Provider } from "../components/ModelSelector";
+import { useDebugStream } from "../components/analytics/useDebugStream";
+import { NodeCard } from "../components/analytics/NodeCard";
+import { FlowTimeline } from "../components/analytics/FlowTimeline";
+import { MemoryPanel } from "../components/analytics/MemoryPanel";
 
 const API_BASE = "http://localhost:8000/api";
 
@@ -27,11 +31,9 @@ export default function Home() {
   const [waitingForAnswer, setWaitingForAnswer] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState("");
   
-  const [verdictData, setVerdictData] = useState<string | null>(null);
+  const [verdictData, setVerdictData] = useState<any>(null);
   const [domainData, setDomainData] = useState<any>(null);
   const [hitlData, setHitlData] = useState<any>(null);
-  const [sessionId, setSessionId] = useState("");
-  const [pitcherId, setPitcherId] = useState("");
   const [difficulty, setDifficulty] = useState("standard");
   const [radarChart, setRadarChart] = useState<string | null>(null);
   
@@ -56,6 +58,11 @@ export default function Home() {
   const [isInterrupting, setIsInterrupting] = useState(false);
   const [isAnsweringInterrupt, setIsAnsweringInterrupt] = useState(false);
   const [activeHosts, setActiveHosts] = useState<{host_a: any, host_b: any} | null>(null);
+
+  // Agentic v4 States
+  const [awaitingPitchConfirmation, setAwaitingPitchConfirmation] = useState(false);
+  const [awaitingUserInput, setAwaitingUserInput] = useState(false);
+  const [originalSummary, setOriginalSummary] = useState("");
 
   const audioQueueRef = useRef<{role: AgentRole, text: string}[]>([]);
   const isPlayingRef = useRef(false);
@@ -118,6 +125,35 @@ export default function Home() {
     }
   };
 
+  const [sessionId, setSessionId] = useState("");
+  const [pitcherId, setPitcherId] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [activeAgent, setActiveAgent] = useState<{ id: string, name: string } | null>(null);
+
+  // Analytics debug stream — passive accumulator fed by the main EventSource
+  const debugStream = useDebugStream();
+  const analyticsListEndRef = useRef<HTMLDivElement>(null);
+
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  const sessionInitialized = useRef(false);
+
+  useEffect(() => {
+    if (!sessionInitialized.current) {
+      sessionInitialized.current = true;
+      const newSessionId = crypto.randomUUID();
+      setSessionId(newSessionId);
+      console.log("Initial Session ID generated:", newSessionId);
+    }
+    
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (view === "library") {
       fetchLibrary();
@@ -126,22 +162,28 @@ export default function Home() {
 
   const handleNewPitch = () => {
     setStage("idle");
-    setSessionId(`session_${Math.random().toString(36).substr(2, 9)}`);
+    const newSessionId = crypto.randomUUID();
+    setSessionId(newSessionId);
+    console.log("New Session ID generated:", newSessionId);
     setLogs([]);
     setConversation([]);
     setPanelState({});
     setVerdictData(null);
     setShowVerdictModal(false);
     setView("panel");
+    debugStream.reset();
   };
 
   const startPitch = () => {
     setStage("pitching");
     setManualText("");
-    setSessionId(Math.random().toString(36).substring(2, 10));
+    const newSessionId = crypto.randomUUID();
+    setSessionId(newSessionId);
+    console.log("Session ID for pitch:", newSessionId);
     setConversation([]);
     setPanelState({});
     setShowVerdictModal(false);
+    debugStream.reset();
   };
 
   const finishPitch = async () => {
@@ -156,11 +198,26 @@ export default function Home() {
     url.searchParams.append("difficulty", difficulty);
     if (pitcherId) url.searchParams.append("pitcher_id", pitcherId);
 
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
     const eventSource = new window.EventSource(url.toString());
+    eventSourceRef.current = eventSource;
+    setIsStreaming(true);
+
+    eventSource.onopen = () => {
+      console.log("Stream connected for session:", sessionId);
+      debugStream.setConnected(true);
+    };
 
     eventSource.addEventListener("hitl_summary_approval", (e: any) => {
       const data = JSON.parse(e.data);
+      console.log("Event received: hitl_summary_approval", data);
       setHitlData(data);
+      setOriginalSummary(data.summary);
+      setAwaitingPitchConfirmation(true);
       setStage("hitl_summary");
       setConversation([{
         type: "answer",
@@ -171,6 +228,7 @@ export default function Home() {
 
     eventSource.addEventListener("echochamber_start", (e: any) => {
       const data = JSON.parse(e.data);
+      console.log("Event received: echochamber_start", data);
       setStage("conversation");
       const initialState: PanelState = {};
       initialState["interviewer"] = { text: "", status: "idle", role: "host", name: "Lead Interviewer" };
@@ -182,9 +240,20 @@ export default function Home() {
       setPanelState(initialState);
     });
 
+    eventSource.addEventListener("agent_start", (e: any) => {
+        const data = JSON.parse(e.data);
+        setActiveAgent({ id: data.agent_id, name: data.name });
+    });
+
     eventSource.addEventListener("agent_turn", (e: any) => {
       const data = JSON.parse(e.data);
+      console.log("Event received: agent_turn", data);
       setCurrentAgentId(data.agent_id);
+      setActiveAgent(null);
+      
+      if (data.type === "interviewer_invitation") {
+        setWaitingForAnswer(true);
+      }
       
       if (data.token) {
         updateAgentState(data.agent_id, data.token, "streaming");
@@ -193,56 +262,130 @@ export default function Home() {
         enqueueSpeech(data.agent_id, data.content);
         
         setConversation((prev: ConversationTurn[]) => [...prev, {
-          type: data.turn_type || "persona_response",
+          type: data.turn_type || data.type || "persona_response",
           agent_id: data.agent_id,
-          agent_name: data.name || data.agent_id,
+          agent_name: data.agent_name || data.name || data.agent_id,
           content: data.content
         }]);
       }
+      debugStream.pushEvent("agent_turn", data);
     });
 
     eventSource.addEventListener("waiting_for_pitcher", (e: any) => {
       const data = JSON.parse(e.data);
+      console.log("Event received: waiting_for_pitcher", data);
       setWaitingForAnswer(true);
+      setAwaitingUserInput(true);
       setCurrentQuestion(data.question);
       setManualText("");
     });
 
     eventSource.addEventListener("black_swan_report", (e: any) => {
       const data = JSON.parse(e.data);
-      setVerdictData(data.report);
+      setVerdictData(data);
       setStage("verdict");
       setShowVerdictModal(true);
     });
 
+    eventSource.addEventListener("verdict_complete", (e: any) => {
+      const data = JSON.parse(e.data);
+      if (!verdictData) setVerdictData(data);
+      setStage("verdict");
+      setShowVerdictModal(true);
+      setIsStreaming(false);
+    });
+
+    // Named 'error' events are fatal errors sent by the server explicitly
     eventSource.addEventListener("error", (e: any) => {
+      try {
+        const data = JSON.parse(e.data);
+        console.error("Fatal stream error from server:", data);
+      } catch {
+        console.error("Fatal stream error:", e);
+      }
       eventSource.close();
+      eventSourceRef.current = null;
+      setIsStreaming(false);
+      setActiveAgent(null);
+    });
+
+    // heartbeat events keep the connection alive — silently ignore them
+    eventSource.addEventListener("heartbeat", () => {});
+
+    // debug_node events feed the analytics execution graph
+    eventSource.addEventListener("debug_node", (e: any) => {
+      try {
+        const data = JSON.parse(e.data);
+        debugStream.pushEvent("debug_node", data);
+      } catch {}
+    });
+
+    // onerror fires on transient network issues — don't close if SSE is still trying to reconnect
+    eventSource.onerror = (e: any) => {
+      if (eventSource.readyState === EventSource.CLOSED) {
+        console.error("SSE connection closed unexpectedly.");
+        eventSourceRef.current = null;
+        setIsStreaming(false);
+        setActiveAgent(null);
+      } else {
+        // readyState is CONNECTING — browser is auto-reconnecting, don't interfere
+        console.warn("SSE transient error, browser reconnecting...");
+      }
+    };
+    
+    eventSource.addEventListener("conversation_complete", (e: any) => {
+      const data = JSON.parse(e.data);
+      console.log("Event received: conversation_complete", data);
+      setStage("verdict");
+      setVerdictData(data);
+      setShowVerdictModal(true);
+      setIsStreaming(false);
+      setActiveAgent(null);
+      debugStream.pushEvent("conversation_complete", data);
+      debugStream.setConnected(false);
     });
   };
 
   const approveSummary = async () => {
     if (!hitlData) return;
+    console.log("Sending approval request...");
+    const isEdited = hitlData.summary !== originalSummary;
+    
     setStage("conversation");
+    setAwaitingPitchConfirmation(false);
+    
+    // Update the first conversation turn (the pitch) with the refined/approved summary
+    setConversation((prev: any[]) => {
+      if (prev.length > 0) {
+        const newConv = [...prev];
+        newConv[0] = { ...newConv[0], content: hitlData.summary };
+        return newConv;
+      }
+      return prev;
+    });
+    
     try {
-      await fetch(`${API_BASE}/hitl/approve`, {
+      await fetch(`${API_BASE}/pitch/approve-summary`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          session_id: hitlData.session_id,
+          session_id: sessionId,
           approved: true,
-          corrected_summary: hitlData.summary
+          corrected_summary: isEdited ? hitlData.summary : null
         })
       });
-    } catch(e) {}
+    } catch(e) {
+      console.error("Failed to approve summary:", e);
+    }
   };
 
   const submitAnswer = async () => {
     if (!manualText) return;
     const ans = manualText;
-    setWaitingForAnswer(false);
-    setIsAnsweringInterrupt(false);
+    setAwaitingUserInput(false);
     
     try {
+      console.log("Sending answer to session:", sessionId);
       await fetch(`${API_BASE}/conversation/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -252,11 +395,6 @@ export default function Home() {
         })
       });
       
-      setConversation((prev: ConversationTurn[]) => [...prev, {
-        type: "pitcher_response",
-        agent_name: pitcherId || "Alex Chen",
-        content: ans
-      }]);
       setManualText("");
     } catch(e) {}
   };
@@ -469,40 +607,119 @@ export default function Home() {
               </div>
             </div>
           ) : view === "analytics" ? (
-            <div className="p-16 max-w-[1600px] mx-auto w-full space-y-16 duration-700 h-full overflow-y-auto custom-scrollbar">
-              <div className="space-y-4">
-                <h2 className="text-6xl font-black text-slate-800 tracking-tight leading-none">Market Intel Analysis</h2>
-                <p className="text-slate-400 font-medium text-xl max-w-2xl leading-relaxed">Synthesis of panel insights against global market trends and adversarial threats.</p>
+            <div className="p-16 max-w-[1600px] mx-auto w-full space-y-10 duration-700 h-full overflow-y-auto custom-scrollbar">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <h2 className="text-5xl font-black text-slate-800 tracking-tight leading-none font-headline">Agent Execution Graph</h2>
+                  <p className="text-slate-400 font-medium text-lg max-w-2xl leading-relaxed">
+                    Real-time visualization of the LangGraph node execution flow.
+                  </p>
+                  {sessionId && (
+                    <p className="text-xs text-slate-300 font-mono mt-1">session: {sessionId}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 bg-white border border-slate-100 rounded-2xl px-5 py-3 shadow-sm">
+                  <div className={`w-2.5 h-2.5 rounded-full ${debugStream.isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                    {debugStream.isConnected ? 'Connected' : 'Disconnected'}
+                  </span>
+                </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-12 pt-10">
-                 <div className="md:col-span-8 bg-white border border-slate-100 rounded-[3rem] p-12 shadow-xl shadow-slate-200/20">
-                    <div className="flex items-center justify-between mb-12">
-                       <h3 className="text-2xl font-bold text-slate-800 tracking-tight">Vulnerability Heatmap</h3>
-                       <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full uppercase tracking-widest">Active Model</span>
-                    </div>
-                    <div className="h-96 w-full bg-slate-50/50 rounded-[2rem] flex items-center justify-center border border-dashed border-slate-200">
-                       <p className="text-slate-300 font-medium">Aggregating real-time debate vectors...</p>
-                    </div>
-                 </div>
-                 <div className="md:col-span-4 space-y-12">
-                    <div className="bg-[#0d1c2e] rounded-[3rem] p-12 text-white shadow-2xl shadow-emerald-950/20">
-                       <h3 className="text-xl font-bold mb-6 tracking-tight">Panel Sentiment</h3>
-                       <div className="space-y-6">
-                          {['Strategic Fit', 'Technical Feasibility', 'Market Viability'].map(metric => (
-                             <div key={metric} className="space-y-2">
-                                <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-60">
-                                   <span>{metric}</span>
-                                   <span>85%</span>
-                                </div>
-                                <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                                   <div className="h-full bg-emerald-400 w-[85%]" />
-                                </div>
-                             </div>
-                          ))}
-                       </div>
-                    </div>
-                 </div>
+
+              {/* No session warning */}
+              {!sessionId && (
+                <div className="p-5 bg-amber-50 border border-amber-200 rounded-2xl text-sm text-amber-800 font-medium">
+                  No active session. Start a pitch from the Panel tab to see live execution data here.
+                </div>
+              )}
+
+              {/* Current active node banner */}
+              {debugStream.currentNode && (
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-2xl flex items-center gap-3">
+                  <div className="w-2.5 h-2.5 rounded-full bg-blue-500" style={{ animation: 'pulse 1.5s infinite' }} />
+                  <span className="text-sm text-blue-700 font-semibold">
+                    Active: <span className="font-bold">{debugStream.currentNode}</span>
+                    {debugStream.executions.length > 0 && debugStream.executions[debugStream.executions.length - 1].action && (
+                      <span className="text-blue-400 ml-2">
+                        → {debugStream.executions[debugStream.executions.length - 1].action}
+                        {debugStream.executions[debugStream.executions.length - 1].target && ` (${debugStream.executions[debugStream.executions.length - 1].target})`}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
+
+              {/* Flow Timeline */}
+              <div className="bg-white border border-slate-100 rounded-[2rem] p-8 shadow-sm">
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.15em] mb-4">Flow Timeline</p>
+                <FlowTimeline executions={debugStream.executions} currentNode={debugStream.currentNode} />
               </div>
+
+              {/* 2-column layout */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                {/* Execution History */}
+                <div className="lg:col-span-8">
+                  <div className="bg-white border border-slate-100 rounded-[2rem] p-8 shadow-sm">
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.15em] mb-4">
+                      Execution History ({debugStream.executions.length} steps)
+                    </p>
+                    <div style={{ maxHeight: '560px', overflowY: 'auto', paddingRight: '4px' }}>
+                      {debugStream.executions.length === 0 ? (
+                        <div className="h-64 flex flex-col items-center justify-center text-slate-300 border border-dashed border-slate-200 rounded-2xl">
+                          <span className="material-symbols-outlined text-5xl mb-3">timeline</span>
+                          <p className="text-sm font-medium">Waiting for first node execution...</p>
+                        </div>
+                      ) : (
+                        debugStream.executions.map((ex, i) => (
+                          <NodeCard
+                            key={ex.id}
+                            execution={ex}
+                            isActive={i === debugStream.executions.length - 1 && !debugStream.isComplete}
+                            index={i}
+                          />
+                        ))
+                      )}
+                      <div ref={analyticsListEndRef} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sidebar: Memory + Stats */}
+                <div className="lg:col-span-4 space-y-6" style={{ position: 'sticky', top: '24px' }}>
+                  <MemoryPanel
+                    memory={debugStream.memorySnapshot}
+                    totalTurns={debugStream.totalTurns}
+                    isComplete={debugStream.isComplete}
+                  />
+
+                  {debugStream.executions.length > 0 && (
+                    <div className="bg-white border border-slate-100 rounded-xl p-5">
+                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.15em] mb-3">Node Breakdown</p>
+                      {Object.entries(
+                        debugStream.executions.reduce((acc, ex) => {
+                          acc[ex.node] = (acc[ex.node] ?? 0) + 1;
+                          return acc;
+                        }, {} as Record<string, number>)
+                      )
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([node, count]) => (
+                          <div key={node} className="flex justify-between text-xs text-slate-600 mb-1">
+                            <span>{node}</span>
+                            <span className="font-bold">×{count}</span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <style>{`
+                @keyframes pulse {
+                  0%, 100% { opacity: 1; }
+                  50% { opacity: 0.4; }
+                }
+              `}</style>
             </div>
           ) : (
             <div className="h-full flex flex-col overflow-hidden">
@@ -532,9 +749,9 @@ export default function Home() {
                             onChange={(e) => setDifficulty(e.target.value)} 
                             className="w-full bg-slate-50/50 border border-slate-100/50 rounded-2xl py-6 px-10 text-slate-900 text-lg appearance-none cursor-pointer focus:bg-white focus:ring-2 focus:ring-[#006948]/10 transition-all outline-none"
                           >
-                            <option value="standard">Standard Panel (4 Strategic Agents)</option>
-                            <option value="adversarial">Adversarial (High Scrutiny Focus)</option>
-                            <option value="consensus">Consensus (Balanced Growth Panel)</option>
+                            <option value="gentle">Gentle — supportive panel</option>
+                            <option value="standard">Standard — balanced panel</option>
+                            <option value="brutal">Brutal — no mercy</option>
                           </select>
                           <span className="material-symbols-outlined absolute right-8 bottom-6 text-slate-300 pointer-events-none">expand_more</span>
                         </div>
@@ -563,7 +780,8 @@ export default function Home() {
 
                          <button 
                             onClick={finishPitch} 
-                            className="flex-1 py-7 bg-[#006948] text-white font-extrabold text-2xl rounded-full shadow-2xl shadow-emerald-900/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-4 uppercase tracking-tighter"
+                            disabled={!sessionId || !manualText}
+                            className="flex-1 py-7 bg-[#006948] text-white font-extrabold text-2xl rounded-full shadow-2xl shadow-emerald-900/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-4 uppercase tracking-tighter disabled:opacity-50"
                          >
                            Start Debate
                            <span className="material-symbols-outlined text-2xl">rocket_launch</span>
@@ -589,7 +807,21 @@ export default function Home() {
                       </div>
                     </div>
                     <div className="flex-1 flex flex-col h-full bg-white border border-slate-100 rounded-[3rem] shadow-[0_20px_50px_rgba(0,0,0,0.04)] overflow-hidden">
-                       <LiveFeed turns={conversation} agents={Object.values(panelState)} onJumpIn={handleInterrupt} isRecording={isRecording} />
+                       <LiveFeed 
+                          turns={conversation} 
+                          agents={Object.values(panelState)} 
+                          onJumpIn={handleInterrupt} 
+                          isRecording={isRecording}
+                          awaitingUserInput={awaitingUserInput}
+                          userInput={manualText}
+                          onUserInputChange={(val) => setManualText(val)}
+                          onSendAnswer={submitAnswer}
+                          currentQuestion={currentQuestion}
+                          isAnsweringInterrupt={isAnsweringInterrupt}
+                          isStreaming={isStreaming}
+                          activeAgent={activeAgent}
+                          onSetAwaitingUserInput={setAwaitingUserInput}
+                        />
                     </div>
                   </div>
                ) : stage === "verdict" && verdictData ? (
@@ -612,25 +844,7 @@ export default function Home() {
                 <span className="material-symbols-outlined text-3xl group-hover:scale-110 transition-transform">stop_circle</span>
               </button>
 
-              {waitingForAnswer && (
-                <div className="bg-white/95 backdrop-blur-md rounded-[2.5rem] p-4 shadow-[0_40px_80px_rgba(0,0,0,0.12)] border border-slate-100 flex items-center gap-4 w-[650px] duration-500 ring-8 ring-slate-900/[0.02]">
-                  <textarea 
-                    value={manualText} 
-                    onChange={(e) => setManualText(e.target.value)} 
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), submitAnswer())} 
-                    className="flex-1 bg-slate-50 border-none rounded-[1.5rem] py-5 px-8 text-slate-800 placeholder:text-slate-300 focus:bg-white focus:ring-2 focus:ring-[#006948]/10 transition-all outline-none resize-none h-20 text-base font-medium" 
-                    placeholder={isAnsweringInterrupt ? "What is your counter-argument?..." : "Respond to the panel..."} 
-                    autoFocus
-                  />
-                  <button 
-                    onClick={submitAnswer} 
-                    disabled={!manualText} 
-                    className="w-20 h-20 rounded-full bg-[#006948] hover:bg-[#005a3e] text-white flex items-center justify-center shadow-2xl shadow-emerald-950/20 disabled:opacity-30 disabled:grayscale transition-all active:scale-95 group"
-                  >
-                    <span className="material-symbols-outlined text-3xl group-hover:translate-x-0.5 transition-transform">send</span>
-                  </button>
-                </div>
-              )}
+              {/* Answer UI now handled inside LiveFeed */}
            </div>
         )}
 

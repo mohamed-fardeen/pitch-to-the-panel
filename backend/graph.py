@@ -1,4 +1,4 @@
-from typing import TypedDict, Annotated, List
+from typing import TypedDict, Annotated, List, Optional
 import operator
 from langgraph.graph import StateGraph, END
 
@@ -10,128 +10,119 @@ class FocusGroupState(TypedDict):
     difficulty: str
     provider: str
     
+    # NEW Agentic Architecture Fields
+    action: str  # Decided by controller
+    action_input: dict
+    action_history: Annotated[List[str], operator.add]
+    step_count: int
+    max_steps: int
+    last_reflection_step: int
+    last_persona_used: str
+    
+    # User Interaction
+    input_type: str  # "confirmation | answer | interrupt"
+    awaiting_user_input: bool
+    pitcher_interrupt: bool
+    pitcher_message: str
+    
+    # Pitch Refinement
+    refined_pitch: str
+    awaiting_pitch_confirmation: bool
+    
+    # Memory and Reflection
+    memory: dict  # { "claims": [], "risks": [], "strengths": [], "contradictions": [] }
+    reflection: dict  # { "missing": [], "confidence": float, "should_continue": bool }
+    
     # Conversation history
     conversation: Annotated[List[dict], operator.add]
-    
-    # Current turn tracking
-    current_question: str
-    directed_at: str
-    turn_count: int
-    
-    # Conflict tracking
-    last_two_responses: List[dict]
-    conflict_detected: bool
-    conflict_topic: str
-    debater_a: str
-    debater_b: str
-    
-    # Pitcher state
-    pitcher_message_pending: bool
-    pitcher_message: str
-    pitcher_interrupt: bool
-    
-    # Control
-    force_end: bool
-    should_invite_pitcher: bool
-    session_complete: bool
-    remaining_personas: List[str]
-    debate_rounds: int
-    
-    # Flagged claims
-    flagged_claims: Annotated[List[dict], operator.add]
 
-def build_focus_group_graph(
-    interviewer_node,
-    persona_response_node,
-    conflict_router_node,
-    debate_engine_node,
-    invite_pitcher_node,
-    hallucination_guard_node,
-    check_completion_node
+def build_agentic_graph(
+    pitch_refiner_node,
+    controller_node,
+    persona_node,
+    pitcher_node,
+    tool_node,
+    reflection_node,
+    final_node,
+    memory_update_node
 ):
     """
-    Build the LangGraph state machine for the EchoChamber focus group.
+    Build the Controller-driven agentic loop for the Pitch to the Panel system.
     """
     workflow = StateGraph(FocusGroupState)
     
-    # Add nodes
-    workflow.add_node("interviewer", interviewer_node)
-    workflow.add_node("persona_response", persona_response_node)
-    workflow.add_node("conflict_router", conflict_router_node)
-    workflow.add_node("debate_engine", debate_engine_node)
-    workflow.add_node("invite_pitcher", invite_pitcher_node)
-    workflow.add_node("hallucination_guard", hallucination_guard_node)
-    workflow.add_node("check_completion", check_completion_node)
+    # Add Nodes
+    workflow.add_node("pitch_refiner", pitch_refiner_node)
+    workflow.add_node("controller", controller_node)
+    workflow.add_node("persona", persona_node)
+    workflow.add_node("pitcher", pitcher_node)
+    workflow.add_node("tool", tool_node)
+    workflow.add_node("reflection", reflection_node)
+    workflow.add_node("final", final_node)
+    workflow.add_node("memory_update", memory_update_node)
     
-    # Entry point
-    workflow.set_entry_point("interviewer")
+    # Entry Point: Pitch refinement always comes first
+    workflow.set_entry_point("pitch_refiner")
     
-    # Fixed edges
-    workflow.add_edge("interviewer", "persona_response")
-    workflow.add_edge("hallucination_guard", "conflict_router")
-    workflow.add_edge("invite_pitcher", "interviewer")
-    
-    # Conditional edges
+    # Pitch Refinement Loop
     workflow.add_conditional_edges(
-        "persona_response",
-        route_after_persona,
+        "pitch_refiner",
+        lambda x: "wait" if x.get("awaiting_pitch_confirmation") else "continue",
         {
-            "persona_response": "persona_response",
-            "hallucination_guard": "hallucination_guard"
+            "wait": "pitch_refiner",  # Loop back if waiting for user
+            "continue": "controller"
         }
     )
     
+    # Controller uses the router to decide the next step
     workflow.add_conditional_edges(
-        "debate_engine",
-        route_after_debate,
+        "controller",
+        action_router,
         {
-            "continue_debate": "persona_response",
-            "end_debate": "conflict_router"
+            "ask_persona": "persona",
+            "ask_pitcher": "pitcher",
+            "use_tool": "tool",
+            "reflect": "reflection",
+            "end_session": "final"
         }
     )
     
-    # Conditional edges
-    workflow.add_conditional_edges(
-        "conflict_router",
-        route_after_conflict,
-        {
-            "debate": "debate_engine",
-            "continue": "check_completion"
-        }
-    )
+    # Centralized Memory Update before returning to controller
+    workflow.add_edge("persona", "memory_update")
+    workflow.add_edge("tool", "memory_update")
+    workflow.add_edge("memory_update", "controller")
     
-    workflow.add_conditional_edges(
-        "check_completion",
-        route_after_check,
-        {
-            "invite_pitcher": "invite_pitcher",
-            "continue": "interviewer",
-            "end": END
-        }
-    )
+    # These stay direct or handle their own logic
+    workflow.add_edge("pitcher", "controller")
+    workflow.add_edge("reflection", "controller")
+    
+    # End node
+    workflow.add_edge("final", END)
     
     return workflow.compile()
 
-def route_after_conflict(state: FocusGroupState):
-    if state.get("conflict_detected"):
-        last_two = state.get("last_two_responses", [])
-        if len(last_two) >= 2:
-            return "debate"
-    return "continue"
+def action_router(state):
+    if state.get("awaiting_user_input"):
+        return "controller"
 
-def route_after_persona(state: FocusGroupState):
-    if state.get("remaining_personas"):
-        return "persona_response"
-    return "hallucination_guard"
+    if state.get("pitcher_interrupt"):
+        return "controller"
 
-def route_after_debate(state: FocusGroupState):
-    if state.get("debate_rounds", 0) < 2:
-        return "continue_debate"
-    return "end_debate"
+    if state.get("step_count", 0) >= state.get("max_steps", 20):
+        return "end_session"
 
-def route_after_check(state: FocusGroupState):
-    if state.get("session_complete"):
-        return "end"
-    if state.get("should_invite_pitcher"):
-        return "invite_pitcher"
-    return "continue"
+    action = state.get("action")
+    if not action:
+        print("[ROUTER WARNING] Missing action")
+        return "reflect"
+
+    if (
+        state.get("step_count", 0) - state.get("last_reflection_step", 0) >= 3
+        and action not in ["reflect", "end_session"]
+        and not state.get("awaiting_user_input")
+    ):
+        return "reflect"
+
+    print(f"[ROUTER] step={state.get('step_count')} → {action}")
+
+    return action

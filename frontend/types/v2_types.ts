@@ -1,4 +1,20 @@
-export type AgentRole = "host" | "observer" | "pitcher" | "mediator" | "critic";
+export type AgentRole =
+  | "vc"
+  | "enthusiastic"
+  | "hostile"
+  | "expert"
+  | "competitor"
+  | "beginner"
+  | "suresh"
+  | "design_critic"
+  | "dr_iyer_design"
+  | "meera_design"
+  | "interviewer"
+  | "host"
+  | "observer"
+  | "critic"
+  | "mediator"
+  | "pitcher";
 
 export type AgentStatus = "idle" | "thinking" | "speaking" | "interrupted" | "listening" | "done" | "streaming" | "error";
 

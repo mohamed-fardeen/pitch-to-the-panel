@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+const API_BASE = "http://localhost:8000/api";
 
 interface VerdictCardProps {
   verdict: string;
@@ -16,8 +17,23 @@ export function VerdictCard({ verdict, sessionId, onClose }: VerdictCardProps) {
   const weakness = !isV3 ? (v2Parts[1]?.trim() || "") : "";
   const toFix = !isV3 ? (v2Parts[2]?.trim() || "") : "";
 
-  const handleDownload = () => {
-    window.open(`http://localhost:8000/api/session/${sessionId}/blackswan`, "_blank");
+  const handleDownloadReport = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/session/${sessionId}/report`);
+      if (!response.ok) throw new Error("Report not ready");
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pitch-report-${sessionId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download failed:", err);
+    }
   };
 
   return (
@@ -94,7 +110,7 @@ export function VerdictCard({ verdict, sessionId, onClose }: VerdictCardProps) {
         {/* Actions Section */}
         <div className="p-10 pt-0">
           <button 
-            onClick={handleDownload} 
+            onClick={handleDownloadReport} 
             className="w-full py-6 primary-gradient rounded-2xl font-headline font-extrabold text-white shadow-xl shadow-primary/20 hover:scale-[1.01] flex items-center justify-center gap-4 transition-all uppercase tracking-tighter text-xl"
           >
             <span className="material-symbols-outlined">download</span>

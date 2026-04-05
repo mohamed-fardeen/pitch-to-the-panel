@@ -69,6 +69,13 @@ export function useSpeechRecognition() {
         console.error("Failed to initialize SpeechRecognition:", e);
       }
     }
+    
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+        recognitionRef.current = null;
+      }
+    };
   }, []);
 
   const startRecording = async () => {
@@ -85,7 +92,8 @@ export function useSpeechRecognition() {
     try {
       console.log("Attempting to trigger browser permission prompt...");
       // Forcing a permission prompt via the MediaDevices API
-      await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
       
       console.log("Permission granted. Initializing recognition...");
       setTranscript("");

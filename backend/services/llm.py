@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import httpx
 from typing import AsyncGenerator
 from google import genai as google_genai
 from google.genai import types
@@ -26,18 +27,33 @@ class LLMProvider:
         self.groq_client = AsyncOpenAI(api_key=os.getenv("GROQ_API_KEY"), base_url="https://api.groq.com/openai/v1") if os.getenv("GROQ_API_KEY") else None
 
     async def generate_response(self, system_prompt: str, user_prompt: str, provider: str = "anthropic", stream: bool = False, max_tokens: int = 1024) -> str | AsyncGenerator[str, None]:
-        try:
-            return await self._generate_response_internal(system_prompt, user_prompt, provider, stream, max_tokens)
-        except Exception as e:
-            print(f"Provider {provider} failed: {e}. Falling back to Gemini.")
-            if provider != "gemini" and self.gemini_client:
-                try:
-                    return await self._generate_response_internal(system_prompt, user_prompt, "gemini", stream, max_tokens)
-                except Exception as fallback_e:
-                    print(f"Fallback to Gemini also failed: {fallback_e}")
-                    raise fallback_e
-            else:
-                raise e
+        # Define fallback chain
+        provider_chain = [provider]
+        if provider == "groq":
+            provider_chain.append("anthropic")
+        elif provider == "anthropic":
+            provider_chain.append("groq")
+        
+        # Always attempt at least two
+        if len(provider_chain) < 2 and provider != "gemini":
+            provider_chain.append("gemini")
+
+        last_error = None
+        for attempt_provider in provider_chain:
+            try:
+                return await self._generate_response_internal(system_prompt, user_prompt, attempt_provider, stream, max_tokens)
+            except Exception as e:
+                last_error = e
+                print(f"[LLM FALLBACK] {attempt_provider} failed: {type(e).__name__}: {str(e)[:100]}")
+                continue
+
+        # Both providers failed
+        print(f"[LLM FALLBACK] All providers failed. Last error: {last_error}")
+        if stream:
+            async def empty_gen(): yield ""; return
+            return empty_gen()
+        
+        raise last_error or Exception("All LLM providers failed")
 
     async def _generate_response_internal(self, system_prompt: str, user_prompt: str, provider: str = "anthropic", stream: bool = False, max_tokens: int = 1024) -> str | AsyncGenerator[str, None]:
         if provider == "anthropic":
@@ -105,6 +121,12 @@ class LLMProvider:
                     max_tokens=max_tokens
                 )
                 return response.choices[0].message.content
+
+        elif provider == "ollama":
+            if stream:
+                return self._stream_ollama(system_prompt, user_prompt)
+            else:
+                return await self._sync_ollama(system_prompt, user_prompt)
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -160,5 +182,48 @@ class LLMProvider:
         async for chunk in stream:
             if chunk.choices[0].delta.content is not None:
                 yield chunk.choices[0].delta.content
+
+    async def _sync_ollama(self, system_prompt: str, user_prompt: str) -> str:
+        payload = {
+            "model": "llama3.2",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "stream": False
+        }
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post("http://localhost:11434/api/chat", json=payload, timeout=60.0)
+                if response.status_code == 200:
+                    return response.json().get("message", {}).get("content", "")
+                raise Exception(f"Ollama API returned non-200 status: {response.status_code}")
+            except Exception as e:
+                print(f"[OLLAMA SYNC] Error: {str(e)}")
+                raise e
+
+    async def _stream_ollama(self, system_prompt: str, user_prompt: str) -> AsyncGenerator[str, None]:
+        payload = {
+            "model": "llama3.2",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "stream": True
+        }
+        async with httpx.AsyncClient() as client:
+            try:
+                async with client.stream("POST", "http://localhost:11434/api/chat", json=payload, timeout=60.0) as response:
+                    async for line in response.aiter_lines():
+                        if line:
+                            try:
+                                data = json.loads(line)
+                                if "message" in data and "content" in data["message"]:
+                                    yield data["message"]["content"]
+                            except json.JSONDecodeError:
+                                continue
+            except Exception as e:
+                print(f"[OLLAMA STREAM] Error: {str(e)}")
+                raise e
 
 llm_provider = LLMProvider()

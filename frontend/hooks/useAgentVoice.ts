@@ -32,7 +32,16 @@ const AGENT_VOICE_CONFIGS: Record<string, VoiceConfig> = {
   tariq: { pitch: 0.75, rate: 0.85, genderPref: "male" },
   lena: { pitch: 1.1, rate: 1.15, genderPref: "female" },
   victor: { pitch: 0.85, rate: 0.95, genderPref: "male" },
-  interviewer: { pitch: 0.9, rate: 1.0, genderPref: "male" }
+  interviewer: { pitch: 0.9, rate: 1.0, genderPref: "male" },
+  
+  // v4 New Personas
+  suresh: { pitch: 0.7, rate: 0.8, genderPref: "male" },
+  aisha: { pitch: 1.05, rate: 1.1, genderPref: "female" },
+  kiran: { pitch: 1.1, rate: 1.15, genderPref: "male" },
+  meera: { pitch: 0.95, rate: 1.0, genderPref: "female" },
+  ananya: { pitch: 1.1, rate: 0.95, genderPref: "female" },
+  rahul: { pitch: 0.9, rate: 1.05, genderPref: "male" },
+  priya: { pitch: 1.2, rate: 1.0, genderPref: "female" }
 };
 
 // Very safe chunk length to avoid Chrome's 200-char/15-second "silent restart" bug
@@ -70,6 +79,11 @@ export function useAgentVoice() {
         if (resumeTimerRef.current) clearInterval(resumeTimerRef.current);
       };
     }
+    
+    return () => {
+      window.speechSynthesis.cancel();
+      if (resumeTimerRef.current) clearInterval(resumeTimerRef.current);
+    };
   }, []);
 
   const getBestVoice = (role: AgentRole): SpeechSynthesisVoice | null => {
@@ -84,14 +98,26 @@ export function useAgentVoice() {
     const females = pool.filter(v => femaleKeywords.some(k => v.name.toLowerCase().includes(k)));
 
     if (config.genderPref === "male" && males.length > 0) {
-      const maleRoles = Object.keys(AGENT_VOICE_CONFIGS).filter(k => AGENT_VOICE_CONFIGS[k as AgentRole].genderPref === "male");
-      return males[maleRoles.indexOf(role) % males.length];
+      const allMaleRoles = Object.keys(AGENT_VOICE_CONFIGS).filter(k => AGENT_VOICE_CONFIGS[k].genderPref === "male");
+      const index = allMaleRoles.indexOf(role);
+      return males[Math.max(0, index) % males.length];
     } else if (config.genderPref === "female" && females.length > 0) {
-      const femaleRoles = Object.keys(AGENT_VOICE_CONFIGS).filter(k => AGENT_VOICE_CONFIGS[k as AgentRole].genderPref === "female");
-      return females[femaleRoles.indexOf(role) % females.length];
+      const allFemaleRoles = Object.keys(AGENT_VOICE_CONFIGS).filter(k => AGENT_VOICE_CONFIGS[k].genderPref === "female");
+      const index = allFemaleRoles.indexOf(role);
+      return females[Math.max(0, index) % females.length];
     }
+
+    // Hash-based absolute fallback if gender-specific pool is empty
     const hash = role.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
-    return pool[hash % pool.length];
+    return pool[hash % pool.length] || voices[0];
+  };
+
+  const getNameOffset = (name: string): { pitch: number, rate: number } => {
+    // Generate a unique but deterministic offset for each name
+    const hash = name.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
+    const pitchOffset = ((hash % 20) - 10) / 100; // ±0.1
+    const rateOffset = ((hash % 14) - 7) / 100;   // ±0.07
+    return { pitch: pitchOffset, rate: rateOffset };
   };
 
   const splitIntoChunks = (text: string): string[] => {
@@ -158,6 +184,9 @@ export function useAgentVoice() {
       return;
     }
 
+    // Cancel any in-progress speech first
+    window.speechSynthesis.cancel();
+
     const config = AGENT_VOICE_CONFIGS[role] || { pitch: 1, rate: 1 };
     const chunks = splitIntoChunks(text);
 
@@ -184,8 +213,10 @@ export function useAgentVoice() {
 
       const utterance = new SpeechSynthesisUtterance(chunk);
       if (voice) utterance.voice = voice;
-      utterance.pitch = config.pitch;
-      utterance.rate = config.rate;
+      
+      const offsets = getNameOffset(role);
+      utterance.pitch = Math.max(0.5, Math.min(2, config.pitch + offsets.pitch));
+      utterance.rate = Math.max(0.5, Math.min(2, config.rate + offsets.rate));
       utterance.volume = 1.0;
 
       let fired = false;

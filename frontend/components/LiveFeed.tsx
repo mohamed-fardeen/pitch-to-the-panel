@@ -8,9 +8,32 @@ interface LiveFeedProps {
   agents: any[];
   onJumpIn?: () => void;
   isRecording?: boolean;
+  awaitingUserInput?: boolean;
+  userInput?: string;
+  onUserInputChange?: (val: string) => void;
+  onSendAnswer?: () => void;
+  currentQuestion?: string;
+  isAnsweringInterrupt?: boolean;
+  isStreaming?: boolean;
+  activeAgent?: { id: string, name: string } | null;
+  onSetAwaitingUserInput?: (val: boolean) => void;
 }
 
-export function LiveFeed({ turns, agents, onJumpIn, isRecording }: LiveFeedProps) {
+export function LiveFeed({ 
+  turns, 
+  agents, 
+  onJumpIn, 
+  isRecording,
+  awaitingUserInput,
+  userInput,
+  onUserInputChange,
+  onSendAnswer,
+  currentQuestion,
+  isAnsweringInterrupt,
+  isStreaming,
+  activeAgent: streamAgent,
+  onSetAwaitingUserInput
+}: LiveFeedProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const getAgentData = (name: string) => {
@@ -103,28 +126,70 @@ export function LiveFeed({ turns, agents, onJumpIn, isRecording }: LiveFeedProps
         )}
       </div>
 
-      {/* Floating Action Container */}
+       {/* Floating Action Container */}
       <div className="absolute bottom-8 left-0 right-0 px-10 pointer-events-none flex justify-center z-20">
-         {onJumpIn && (
+        {awaitingUserInput ? (
+          <div className="pointer-events-auto w-full max-w-2xl bg-white/95 backdrop-blur-xl rounded-[2.5rem] p-4 shadow-2xl border border-emerald-500/20 flex flex-col gap-3 animate-in slide-in-from-bottom-5">
+            {currentQuestion && (
+              <div className="px-4 py-2 bg-emerald-50/50 rounded-2xl border border-emerald-100/30">
+                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">💬 Direct Question:</p>
+                <p className="text-sm font-medium text-slate-700 leading-relaxed italic">"{currentQuestion}"</p>
+              </div>
+            )}
+            <div className="flex gap-4">
+              <input
+                value={userInput}
+                onChange={(e) => onUserInputChange?.(e.target.value)}
+                placeholder={isAnsweringInterrupt ? "What is your counter-argument?..." : "Type your strategic response..."}
+                className="flex-1 bg-slate-50 border-none rounded-2xl py-5 px-8 text-slate-800 placeholder:text-slate-300 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 transition-all outline-none text-base font-medium"
+                autoFocus
+                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), onSendAnswer?.())}
+              />
+              <button 
+                onClick={onSendAnswer}
+                disabled={!userInput?.trim()}
+                className="w-16 h-16 rounded-full bg-[#006948] hover:bg-[#005a3e] text-white flex items-center justify-center shadow-xl shadow-emerald-900/20 disabled:opacity-30 disabled:grayscale transition-all active:scale-95"
+              >
+                <span className="material-symbols-outlined text-2xl">send</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex gap-4 pointer-events-auto items-center">
+            {onJumpIn && (
+              <button 
+                onClick={onJumpIn}
+                className={`flex items-center gap-4 py-5 px-10 rounded-full bg-[#006948] hover:bg-[#005a3e] text-white font-bold uppercase tracking-widest shadow-2xl shadow-emerald-950/20 hover:scale-[1.05] active:scale-[0.95] transition-all ring-4 ring-emerald-500/10 ${isRecording ? 'bg-rose-500 hover:bg-rose-600 ring-rose-500/20' : ''}`}
+              >
+                <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: "'FILL' 1" }}>
+                  {isRecording ? 'stop_circle' : 'bolt'}
+                </span>
+                <span className="text-sm">{isRecording ? 'Stop Recording' : 'JUMP IN'}</span>
+              </button>
+            )}
+            
+            {/* Added a 'Respond' fallback button to force the input box open if needed */}
             <button 
-               onClick={onJumpIn}
-               className={`pointer-events-auto flex items-center gap-4 py-5 px-10 rounded-full bg-[#006948] hover:bg-[#005a3e] text-white font-bold uppercase tracking-widest shadow-2xl shadow-emerald-950/20 hover:scale-[1.05] active:scale-[0.95] transition-all ring-4 ring-emerald-500/10 ${isRecording ? 'bg-rose-500 hover:bg-rose-600 ring-rose-500/20' : ''}`}
+              onClick={() => {
+                onUserInputChange?.("");
+                onSetAwaitingUserInput?.(true);
+              }} 
+              className="w-16 h-16 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-emerald-600 hover:border-emerald-200 transition-all flex items-center justify-center shadow-lg group"
+              title="Manual Response"
             >
-               <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: "'FILL' 1" }}>
-                 {isRecording ? 'stop_circle' : 'pan_tool'}
-               </span>
-               <span className="text-sm">{isRecording ? 'Stop Recording' : 'JUMP IN'}</span>
+              <span className="material-symbols-outlined text-2xl group-hover:scale-110 transition-transform">edit_note</span>
             </button>
-         )}
+          </div>
+        )}
       </div>
 
       {/* Typing Indicator */}
-      {turns.length > 0 && turns[turns.length - 1].agent_name !== "Pitcher" && !activeAgent && (
+      {isStreaming && streamAgent && !activeAgent && (
          <div className="absolute bottom-4 left-10 flex items-center gap-2 py-4 opacity-40">
             <span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-pulse" />
             <span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-pulse delay-75" />
             <span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-pulse delay-150" />
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{turns[turns.length-1].agent_name || "Agent"} is typing</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{streamAgent.name} is thinking...</span>
          </div>
       )}
     </div>
