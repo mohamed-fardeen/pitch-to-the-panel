@@ -19,13 +19,15 @@ export interface NodeExecution {
   agentName: string | null;
 }
 
-interface DebugStreamState {
+export interface DebugStreamState {
   executions: NodeExecution[];
   currentNode: string | null;
   isComplete: boolean;
   isConnected: boolean;
   totalTurns: number;
   memorySnapshot: NodeExecution["memorySnapshot"];
+  fullMemory: any;
+  agentMemory: Record<string, any>;
   pushEvent: (eventType: string, data: any) => void;
   setConnected: (val: boolean) => void;
   reset: () => void;
@@ -38,10 +40,28 @@ export function useDebugStream(): DebugStreamState {
   const [isConnected, setIsConnected] = useState(false);
   const [totalTurns, setTotalTurns] = useState(0);
   const [memorySnapshot, setMemorySnapshot] = useState<NodeExecution["memorySnapshot"]>(null);
+  
+  const [fullMemory, setFullMemory] = useState<any>({ 
+    risks: [], 
+    strengths: [], 
+    claims: [], 
+    contradictions: [], 
+    opinions: [] 
+  });
+
+  const [agentMemory, setAgentMemory] = useState<Record<string, any>>({});
 
   const lastTimestampRef = useRef<number | null>(null);
 
   const pushEvent = useCallback((eventType: string, data: any) => {
+    // 1. Handle Memory Update ASAP
+    if (eventType === "memory_update") {
+      console.log("[DEBUG] Memory update received:", data);
+      if (data.memory) setFullMemory(data.memory);
+      if (data.agent_memory) setAgentMemory(data.agent_memory);
+      return;
+    }
+
     if (eventType === "debug_node") {
       const now = data.timestamp ?? Date.now() / 1000;
       const durationMs = lastTimestampRef.current
@@ -60,7 +80,7 @@ export function useDebugStream(): DebugStreamState {
         durationMs,
         isError: false,
         errorMessage: null,
-        agentName: null,
+        agentName: data.agent_name || null,
       };
 
       setExecutions(prev => [...prev, execution]);
@@ -116,6 +136,8 @@ export function useDebugStream(): DebugStreamState {
     setIsConnected(false);
     setTotalTurns(0);
     setMemorySnapshot(null);
+    setFullMemory({ risks: [], strengths: [], claims: [], contradictions: [], opinions: [] });
+    setAgentMemory({});
     lastTimestampRef.current = null;
   }, []);
 
@@ -130,6 +152,8 @@ export function useDebugStream(): DebugStreamState {
     isConnected,
     totalTurns,
     memorySnapshot,
+    fullMemory,
+    agentMemory,
     pushEvent,
     setConnected,
     reset,

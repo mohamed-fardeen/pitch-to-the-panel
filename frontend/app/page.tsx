@@ -14,6 +14,7 @@ import { useDebugStream } from "../components/analytics/useDebugStream";
 import { NodeCard } from "../components/analytics/NodeCard";
 import { FlowTimeline } from "../components/analytics/FlowTimeline";
 import { MemoryPanel } from "../components/analytics/MemoryPanel";
+import { GraphView } from "../components/graph/GraphView";
 
 const API_BASE = "http://localhost:8000/api";
 
@@ -34,7 +35,7 @@ export default function Home() {
   const [verdictData, setVerdictData] = useState<any>(null);
   const [domainData, setDomainData] = useState<any>(null);
   const [hitlData, setHitlData] = useState<any>(null);
-  const [difficulty, setDifficulty] = useState("standard");
+  const [difficulty, setDifficulty] = useState("venture");
   const [radarChart, setRadarChart] = useState<string | null>(null);
   
   const [manualText, setManualText] = useState("");
@@ -195,7 +196,7 @@ export default function Home() {
     url.searchParams.append("session_id", sessionId);
     url.searchParams.append("pitch", currentPitch);
     url.searchParams.append("provider", provider);
-    url.searchParams.append("difficulty", difficulty);
+    url.searchParams.append("mode", difficulty); // FIXED: Backend v5 expects 'mode' (Fix 3)
     if (pitcherId) url.searchParams.append("pitcher_id", pitcherId);
 
     if (eventSourceRef.current) {
@@ -406,7 +407,20 @@ export default function Home() {
     setIsAnsweringInterrupt(true);
   };
 
-  const endConversation = () => setStage("verdict");
+  const endConversation = async () => {
+    addLog("Ending conversation...");
+    try {
+      await fetch(`${API_BASE}/conversation/end`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId })
+      });
+      // Once ended, the backend will stream the verdict data via SSE.
+      // The event listener for 'black_swan_report' or 'verdict_complete' will set the stage to 'verdict'.
+    } catch (e) {
+      console.error("Failed to end conversation:", e);
+    }
+  };
 
   const getCoachHints = async () => {
     setCoachLoading(true);
@@ -476,7 +490,9 @@ export default function Home() {
         <div className="bg-gradient-to-b from-surface-container-low to-transparent h-px w-full"></div>
 
         <div className="flex-1 overflow-hidden h-full relative">
-          {view === "library" ? (
+          {view === "graph" ? (
+             <GraphView debugStream={debugStream} />
+          ) : view === "library" ? (
             <div className="p-16 max-w-[1600px] mx-auto w-full space-y-16 duration-700 h-full overflow-y-auto custom-scrollbar">
               <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-10">
                 <div className="space-y-4">
@@ -749,9 +765,9 @@ export default function Home() {
                             onChange={(e) => setDifficulty(e.target.value)} 
                             className="w-full bg-slate-50/50 border border-slate-100/50 rounded-2xl py-6 px-10 text-slate-900 text-lg appearance-none cursor-pointer focus:bg-white focus:ring-2 focus:ring-[#006948]/10 transition-all outline-none"
                           >
-                            <option value="gentle">Gentle — supportive panel</option>
-                            <option value="standard">Standard — balanced panel</option>
-                            <option value="brutal">Brutal — no mercy</option>
+                            <option value="spark">Spark — Creative Ideation</option>
+                            <option value="venture">Venture — Business Valuation</option>
+                            <option value="reality">Reality — Operational Risks</option>
                           </select>
                           <span className="material-symbols-outlined absolute right-8 bottom-6 text-slate-300 pointer-events-none">expand_more</span>
                         </div>

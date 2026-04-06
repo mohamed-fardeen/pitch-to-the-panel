@@ -26,36 +26,38 @@ class LLMProvider:
         self.openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")) if os.getenv("OPENAI_API_KEY") else None
         self.groq_client = AsyncOpenAI(api_key=os.getenv("GROQ_API_KEY"), base_url="https://api.groq.com/openai/v1") if os.getenv("GROQ_API_KEY") else None
 
-    async def generate_response(self, system_prompt: str, user_prompt: str, provider: str = "anthropic", stream: bool = False, max_tokens: int = 1024) -> str | AsyncGenerator[str, None]:
-        # Define fallback chain
+    async def generate_response(self, system_prompt: str, user_prompt: str, provider: str = "ollama", stream: bool = False, max_tokens: int = 1024) -> str | AsyncGenerator[str, None]:
+        if not provider:
+            provider = "ollama"
+
+        # Fallback chain: requested -> local ollama -> groq -> gemini -> fail
         provider_chain = [provider]
         if provider == "groq":
-            provider_chain.append("anthropic")
+            provider_chain.extend(["ollama", "gemini"])
+        elif provider == "gemini":
+            provider_chain.extend(["ollama", "groq"])
         elif provider == "anthropic":
-            provider_chain.append("groq")
-        
-        # Always attempt at least two
-        if len(provider_chain) < 2 and provider != "gemini":
-            provider_chain.append("gemini")
+            provider_chain.extend(["ollama", "groq", "gemini"])
+        else: # default ollama
+            provider_chain.extend(["groq", "gemini"])
 
-        last_error = None
-        for attempt_provider in provider_chain:
+        for fallback_provider in provider_chain:
             try:
-                return await self._generate_response_internal(system_prompt, user_prompt, attempt_provider, stream, max_tokens)
+                # FIXED: Return the result inside the loop so we don't try fallbacks on success
+                result = await self._generate_response_internal(system_prompt, user_prompt, fallback_provider, stream, max_tokens)
+                return result
             except Exception as e:
-                last_error = e
-                print(f"[LLM FALLBACK] {attempt_provider} failed: {type(e).__name__}: {str(e)[:100]}")
-                continue
-
-        # Both providers failed
-        print(f"[LLM FALLBACK] All providers failed. Last error: {last_error}")
-        if stream:
-            async def empty_gen(): yield ""; return
-            return empty_gen()
+                print(f"[LLM ERROR] Provider '{fallback_provider}' failed: {e}")
+                # continue to next fallback
         
-        raise last_error or Exception("All LLM providers failed")
+        # If all fail:
+        if stream:
+            async def fallback_stream():
+                yield "I'm sorry, my systems are currently unavailable. Please check your API keys or local server."
+            return fallback_stream()
+        return "I'm sorry, my systems are currently unavailable. Please check your API keys or local server."
 
-    async def _generate_response_internal(self, system_prompt: str, user_prompt: str, provider: str = "anthropic", stream: bool = False, max_tokens: int = 1024) -> str | AsyncGenerator[str, None]:
+    async def _generate_response_internal(self, system_prompt: str, user_prompt: str, provider: str = "ollama", stream: bool = False, max_tokens: int = 1024) -> str | AsyncGenerator[str, None]:
         if provider == "anthropic":
             if not self.anthropic_client:
                 raise ValueError("Anthropic API key not configured")

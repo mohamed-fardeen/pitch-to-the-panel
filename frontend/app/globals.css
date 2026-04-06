@@ -41,7 +41,6 @@ h1, h2, h3, h4, .font-headline {
 
 @layer components {
   .primary-gradient {
-    /* Emerald gradient matched to high-fidelity reference */
     background: linear-gradient(135deg, #006948 0%, #00855d 100%);
   }
 
@@ -64,6 +63,42 @@ h1, h2, h3, h4, .font-headline {
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #cbd5e1;
   }
+}
+
+@layer utilities {
+  .animate-neural-pulse {
+    animation: neural-pulse 3s ease-in-out infinite;
+  }
+  .animate-neural-float {
+    animation: neural-float 4s ease-in-out infinite;
+  }
+  .animate-breathing {
+    animation: breathing 4s ease-in-out infinite;
+  }
+  .bg-dot-pattern {
+    background-image: radial-gradient(circle, #cbd5e1 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+}
+
+@keyframes neural-pulse {
+  0%, 100% { opacity: 0.8; transform: scale(1); filter: drop-shadow(0 0 10px currentColor); }
+  50% { opacity: 1; transform: scale(1.05); filter: drop-shadow(0 0 30px currentColor); }
+}
+
+@keyframes neural-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes breathing {
+  0%, 100% { filter: drop-shadow(0 0 5px rgba(99, 102, 241, 0.2)); }
+  50% { filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.5)); }
+}
+
+@keyframes dash-flow {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
 }
 
 .material-symbols-outlined {

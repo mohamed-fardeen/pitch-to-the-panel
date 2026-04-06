@@ -7,7 +7,7 @@ class FocusGroupState(TypedDict):
     session_id: str
     pitch_summary: str
     domain: dict
-    difficulty: str
+    mode: str  # "spark" | "venture" | "reality"
     provider: str
     
     # NEW Agentic Architecture Fields
@@ -20,7 +20,7 @@ class FocusGroupState(TypedDict):
     last_persona_used: str
     
     # User Interaction
-    input_type: str  # "confirmation | answer | interrupt"
+    input_type: str  # "confirmation | pitcher_response | interrupt" # FIXED: Standardized
     awaiting_user_input: bool
     pitcher_interrupt: bool
     pitcher_message: str
@@ -30,8 +30,9 @@ class FocusGroupState(TypedDict):
     awaiting_pitch_confirmation: bool
     
     # Memory and Reflection
-    memory: dict  # { "claims": [], "risks": [], "strengths": [], "contradictions": [] }
-    reflection: dict  # { "missing": [], "confidence": float, "should_continue": bool }
+    memory: dict  # { "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [], "covered_topics": [] }
+    agent_memory: dict # { agent_id: { "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [] } }
+    reflection: dict  # { "missing": [], "confidence": float, "should_continue": bool, "next_priority": str }
     
     # Conversation history
     conversation: Annotated[List[dict], operator.add]
@@ -103,7 +104,7 @@ def build_agentic_graph(
 
 def action_router(state):
     if state.get("awaiting_user_input"):
-        return "controller"
+        return "pitcher"
 
     if state.get("pitcher_interrupt"):
         return "controller"
@@ -113,12 +114,16 @@ def action_router(state):
 
     action = state.get("action")
     if not action:
-        print("[ROUTER WARNING] Missing action")
-        return "reflect"
+        # FIXED: Raise error instead of falling back to reflect
+        raise ValueError("Controller returned no action")
+
+    # FIXED: Dynamic reflection interval based on mode
+    mode = state.get("mode")
+    interval = 5 if mode == "spark" else (2 if mode == "reality" else 4)
 
     if (
-        state.get("step_count", 0) - state.get("last_reflection_step", 0) >= 3
-        and action not in ["reflect", "end_session"]
+        state.get("step_count", 0) - state.get("last_reflection_step", 0) >= interval
+        and action not in ["reflect", "end_session", "ask_pitcher"]
         and not state.get("awaiting_user_input")
     ):
         return "reflect"

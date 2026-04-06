@@ -57,7 +57,8 @@ async def generate_pdf_report(session: dict) -> bytes:
     agent_data = []
     for turn in session.get("conversation", []):
          turn_type = turn.get("type", "")
-         if turn_type in ["question", "reaction", "interrupt_q", "persona_response", "debate", "rebuttal", "answer"] or (turn.get("agent_name") and "system" not in turn.get("agent_name", "").lower()):
+         # FIXED: Standardized type (replaced 'answer' with 'pitcher_response')
+         if turn_type in ["question", "reaction", "interrupt_q", "persona_response", "debate", "rebuttal", "pitcher_response"] or (turn.get("agent_name") and "system" not in turn.get("agent_name", "").lower()):
              agent_id = turn.get("agent_id")
              raw_name = turn.get("agent_name", "Panelist")
              

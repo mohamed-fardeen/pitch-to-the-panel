@@ -4,15 +4,16 @@ import React from "react";
 const API_BASE = "http://localhost:8000/api";
 
 interface VerdictCardProps {
-  verdict: string;
+  verdict: any;
   sessionId: string;
   onClose: () => void;
 }
 
 export function VerdictCard({ verdict, sessionId, onClose }: VerdictCardProps) {
-  const isV3 = verdict.includes("BLACK SWAN") || verdict.includes("EXECUTIVE SUMMARY");
+  const verdictText = typeof verdict === "string" ? verdict : (verdict?.insight || verdict?.verdict || "");
+  const isV3 = verdictText.includes("BLACK SWAN") || verdictText.includes("EXECUTIVE SUMMARY");
   
-  const v2Parts = !isV3 ? verdict.split(/Your biggest weakness:|Before your next pitch:/i) : [];
+  const v2Parts = !isV3 ? verdictText.split(/Your biggest weakness:|Before your next pitch:/i) : [];
   const strongest = !isV3 ? (v2Parts[0]?.replace(/Your strongest point:/i, "").trim() || "") : "";
   const weakness = !isV3 ? (v2Parts[1]?.trim() || "") : "";
   const toFix = !isV3 ? (v2Parts[2]?.trim() || "") : "";
@@ -65,7 +66,7 @@ export function VerdictCard({ verdict, sessionId, onClose }: VerdictCardProps) {
         <div className="p-10 space-y-8 overflow-y-auto custom-scrollbar flex-1">
           {isV3 ? (
             <div className="text-on-surface leading-loose space-y-10">
-              {verdict.split('\n\n').map((p, i) => {
+              {verdictText.split('\n\n').map((p: string, i: number) => {
                 const isHeader = p.startsWith('#') || p.toUpperCase() === p;
                 if (isHeader) {
                   return (
@@ -89,7 +90,7 @@ export function VerdictCard({ verdict, sessionId, onClose }: VerdictCardProps) {
                   Strongest Point
                 </h3>
                 <div className="bg-white border border-outline-variant/5 p-8 rounded-[2rem] text-on-surface shadow-sm group-hover:shadow-md transition-all">
-                  <p className="text-lg font-medium leading-relaxed">{strongest || verdict}</p>
+                  <p className="text-lg font-medium leading-relaxed">{strongest || verdictText}</p>
                 </div>
               </div>
               {weakness && (

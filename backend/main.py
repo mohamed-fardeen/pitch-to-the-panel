@@ -75,7 +75,7 @@ class PitchRequest(BaseModel):
 
 class EvaluationRequest(BaseModel):
     pitch: str
-    provider: str = "anthropic"
+    provider: str = "ollama"
     pitcher_id: str | None = None
 
 class ConversationAnswer(BaseModel):
@@ -109,7 +109,7 @@ class PitcherInterruptRequest(BaseModel):
 class PushbackRequest(BaseModel):
     session_id: str
     pushback: str
-    provider: str = "anthropic"
+    provider: str = "ollama"
 
 class Sketch3DRequest(BaseModel):
     image_url: str
@@ -155,20 +155,24 @@ async def post_message(req: ConversationAnswer):
     # ✅ NORMAL ANSWER FLOW
     if session.get("awaiting_user_input"):
         session["awaiting_user_input"] = False
-        session["input_type"] = "answer"
+        session["input_type"] = "pitcher_response" # FIXED: Standardized type
 
         print(f"[API] answer received: {message}")
 
+        # FIXED: Always trigger event (no conditional check) to avoid race condition/deadlock (Fix 1)
         event = session["events"]["answer_event"]
-        if not event.is_set():
-            event.set()
+        event.set()
 
-        return {"status": "answer_received"}
+        return {"status": "pitcher_response_received"}
 
     # ✅ INTERRUPT FLOW
     session["pitcher_interrupt"] = True
     session["pitcher_message"] = message
     session["input_type"] = "interrupt"
+
+    # FIXED: Wake graph on interrupt
+    if "events" in session and "answer_event" in session["events"]:
+        session["events"]["answer_event"].set()
 
     print(f"[API] interrupt: {message}")
 
@@ -212,7 +216,11 @@ async def submit_rebuttal(req: RebuttalRequest):
     return {"agent_response": response}
 
 @app.get("/api/stream/main")
-async def main_stream(request: Request, session_id: str, pitch: str, provider: str = "groq", pitcher_id: str = None, difficulty: str = "standard"):
+async def main_stream(request: Request, session_id: str, pitch: str, provider: str = "groq", pitcher_id: str = None, mode: str = "venture"):
+    # FIXED: Enforce valid session_id
+    if not session_id or not session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id is required")
+
     # Validate inputs before anything else
     if not pitch or not pitch.strip():
         async def empty_error():
@@ -226,8 +234,9 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
             yield json.dumps({"event": "error", "data": str(e)})
         return EventSourceResponse(validation_error())
 
-    if difficulty not in ["gentle", "standard", "brutal"]:
-        difficulty = "standard"
+    # FIXED: Mandatory mode validation (Fix 6)
+    if mode not in ["spark", "venture", "reality"]:
+        raise HTTPException(status_code=400, detail="Invalid mode")
 
     if provider not in ["groq", "anthropic", "gemini", "ollama"]:
         provider = "ollama"
@@ -246,9 +255,9 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
             "pending_answer": "",
             "pitcher_interrupt": False,
             "pitcher_message": "",
-            "input_type": "",
+            "input_type": "confirmation", # FIXED: Standardized (Fix 5)
             "conversation": [],
-            "difficulty": difficulty,
+            "mode": mode,
             "provider": provider,
             "awaiting_pitch_confirmation": False,
             "awaiting_user_input": False,
@@ -257,7 +266,7 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
     
     async def event_generator():
         try:
-            async for event in stream_echochamber(session_id, sessions[session_id], provider, difficulty):
+            async for event in stream_echochamber(session_id, sessions[session_id], provider, mode):
                 if await request.is_disconnected():
                     break
                 
@@ -306,7 +315,7 @@ async def score_pitch(request: Request):
     for turn in session.get("conversation", []):
         transcript += f"{turn['agent_name']}: {turn['content']}\n"
     
-    return await get_scoring_radar(session["pitch_summary"], {}, data.get("provider", "anthropic"))
+    return await get_scoring_radar(session["pitch_summary"], {}, data.get("provider", session.get("provider", "ollama")))
 
 @app.post("/api/pitch/generate-3d")
 async def meshy_3d(req: Sketch3DRequest):
@@ -358,9 +367,8 @@ async def retry_answer(req: RetryAnswerRequest):
     """
     Pitcher wants to redo their answer to the current
     agent's question. Removes their last answer from
-    the conversation log and resets waiting state.
-    Does not re-ask the question — just clears the answer
-    so the pitcher can try again.
+    the conversation log.
+    # FIXED: Removed legacy waiting_for logic and simplified types.
     """
     if req.session_id not in sessions:
         raise HTTPException(
@@ -370,31 +378,16 @@ async def retry_answer(req: RetryAnswerRequest):
 
     session = sessions[req.session_id]
 
-    # Only allow retry if we are waiting for an answer
-    # or if the last thing in the conversation was
-    # an answer from the pitcher
-    if session.get("waiting_for") not in (
-        "answer", "interrupt_answer", None
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot retry in current state: "
-                   f"{session.get('waiting_for')}"
-        )
-
     # Remove the last pitcher answer from conversation log
     # if one exists for this agent exchange
     conversation = session.get("conversation", [])
-    if conversation and conversation[-1]["type"] == "answer":
+    if conversation and conversation[-1]["type"] == "pitcher_response":
         session["conversation"] = conversation[:-1]
 
     # Also remove the agent reaction if it already fired
     conversation = session.get("conversation", [])
     if conversation and conversation[-1]["type"] == "reaction":
         session["conversation"] = conversation[:-1]
-
-    # Reset waiting state back to waiting for answer
-    session["waiting_for"] = "answer"
 
     # Clear any pending answer
     session["pending_answer"] = ""
@@ -406,7 +399,7 @@ async def retry_answer(req: RetryAnswerRequest):
         "status": "retried",
         "session_id": req.session_id,
         "agent_id": req.agent_id,
-        "message": "Answer cleared. You can respond again."
+        "message": "Response cleared. You can respond again."
     }
 
 from pdf_export import generate_pdf_report
