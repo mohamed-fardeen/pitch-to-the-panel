@@ -12,36 +12,34 @@ interface VoiceConfig {
 }
 
 const AGENT_VOICE_CONFIGS: Record<string, VoiceConfig> = {
-  vc: { pitch: 0.8, rate: 0.95, genderPref: "male" },
-  enthusiastic: { pitch: 1.2, rate: 1.15, genderPref: "female" },
-  hostile: { pitch: 0.7, rate: 0.9, genderPref: "male" },
-  expert: { pitch: 1.0, rate: 1.0, genderPref: "female" },
-  competitor: { pitch: 0.9, rate: 1.05, genderPref: "female" },
-  beginner: { pitch: 1.1, rate: 1.0, genderPref: "male" },
-  judge: { pitch: 0.85, rate: 0.95, genderPref: "male" },
+  vc: { pitch: 0.8, rate: 1.05, genderPref: "male" },
+  enthusiastic: { pitch: 1.2, rate: 1.05, genderPref: "female" },
+  hostile: { pitch: 0.7, rate: 1.0, genderPref: "male" },
+  expert: { pitch: 1.0, rate: 1.0, genderPref: "male" },
+  competitor: { pitch: 0.9, rate: 1.0, genderPref: "male" },
+  beginner: { pitch: 1.1, rate: 0.95, genderPref: "male" },
+  judge: { pitch: 0.85, rate: 1.0, genderPref: "male" },
   host: { pitch: 1.0, rate: 1.0, genderPref: "male" },
-  observer: { pitch: 0.9, rate: 1.1, genderPref: "female" },
-  pitcher: { pitch: 1.0, rate: 1.0, genderPref: "male" },
-  mediator: { pitch: 0.95, rate: 1.0, genderPref: "female" },
-  critic: { pitch: 0.75, rate: 0.9, genderPref: "male" },
+  observer: { pitch: 0.9, rate: 1.0 },
+  pitcher: { pitch: 1.0, rate: 1.0 },
+  mediator: { pitch: 0.95, rate: 1.0 },
+  critic: { pitch: 0.75, rate: 1.0, genderPref: "male" },
   
-  // v3 EchoChamber Personas
-  marcus: { pitch: 0.8, rate: 0.9, genderPref: "male" },
+  // v4 Personas
+  suresh: { pitch: 0.7, rate: 1.0, genderPref: "male" },
+  aisha: { pitch: 1.05, rate: 1.05, genderPref: "female" },
+  kiran: { pitch: 1.1, rate: 0.95, genderPref: "male" },
+  meera: { pitch: 0.95, rate: 1.0, genderPref: "female" },
+  ananya: { pitch: 1.1, rate: 1.0, genderPref: "female" },
+  rahul: { pitch: 0.9, rate: 1.0, genderPref: "male" },
+  priya: { pitch: 1.2, rate: 1.05, genderPref: "female" },
+  marcus: { pitch: 0.8, rate: 1.0, genderPref: "male" },
   sophia: { pitch: 1.15, rate: 1.05, genderPref: "female" },
   elara: { pitch: 1.0, rate: 1.0, genderPref: "female" },
-  tariq: { pitch: 0.75, rate: 0.85, genderPref: "male" },
-  lena: { pitch: 1.1, rate: 1.15, genderPref: "female" },
-  victor: { pitch: 0.85, rate: 0.95, genderPref: "male" },
-  interviewer: { pitch: 0.9, rate: 1.0, genderPref: "male" },
-  
-  // v4 New Personas
-  suresh: { pitch: 0.7, rate: 0.8, genderPref: "male" },
-  aisha: { pitch: 1.05, rate: 1.1, genderPref: "female" },
-  kiran: { pitch: 1.1, rate: 1.15, genderPref: "male" },
-  meera: { pitch: 0.95, rate: 1.0, genderPref: "female" },
-  ananya: { pitch: 1.1, rate: 0.95, genderPref: "female" },
-  rahul: { pitch: 0.9, rate: 1.05, genderPref: "male" },
-  priya: { pitch: 1.2, rate: 1.0, genderPref: "female" }
+  tariq: { pitch: 0.75, rate: 1.0, genderPref: "male" },
+  lena: { pitch: 1.1, rate: 1.05, genderPref: "female" },
+  victor: { pitch: 0.85, rate: 1.0, genderPref: "male" },
+  interviewer: { pitch: 0.9, rate: 1.0, genderPref: "male" }
 };
 
 // Very safe chunk length to avoid Chrome's 200-char/15-second "silent restart" bug
@@ -121,57 +119,31 @@ export function useAgentVoice() {
   };
 
   const splitIntoChunks = (text: string): string[] => {
-    // Clean markdown and formatting
+    if (!text) return [];
+
+    // 1. CLEAN TEXT: Remove line breaks, merge sentences, trim whitespace
     const clean = text
-      .replace(/[*#>`_~\[\]]/g, "")
-      .replace(/\n+/g, ". ")
+      .replace(/[\n\r]+/g, " ")
       .replace(/\s{2,}/g, " ")
-      .replace(/\.{2,}/g, ".")
       .trim();
 
-    // Level 1: Strong boundaries
-    const sentences = clean.split(/(?<=[.?!;:])\s+/).filter(s => s.trim().length > 0);
+    // 2. CHUNK BY SENTENCE: Split using re.split r'[.!?]' (equivalent)
+    const sentences = clean.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 0);
 
-    // Level 2: Commas / Dashes / Conjunctions for long sentences
-    const fragments: string[] = [];
-    for (const sentence of sentences) {
-      if (sentence.length <= MAX_CHUNK) {
-        fragments.push(sentence);
-      } else {
-        const parts = sentence.split(/(?<=[,;])\s+|(?:\s+and\s+)|(?:\s+but\s+)|(?:\s*—\s*)/i).filter(s => s.trim().length > 0);
-        fragments.push(...parts);
-      }
-    }
-
-    // Level 3: Hard-split at word boundaries as last resort
-    const safeFragments: string[] = [];
-    for (const frag of fragments) {
-      if (frag.length <= MAX_CHUNK) {
-        safeFragments.push(frag);
-      } else {
-        let remaining = frag;
-        while (remaining.length > MAX_CHUNK) {
-          let splitAt = remaining.lastIndexOf(" ", MAX_CHUNK);
-          if (splitAt <= 0) splitAt = MAX_CHUNK;
-          safeFragments.push(remaining.substring(0, splitAt).trim());
-          remaining = remaining.substring(splitAt).trim();
-        }
-        if (remaining.trim()) safeFragments.push(remaining.trim());
-      }
-    }
-
-    // Regroup into chunks that are close to but not over MAX_CHUNK
+    // 3. GROUP INTO CHUNKS: 1-2 sentences for smooth flow
     const chunks: string[] = [];
-    let current = "";
-    for (const frag of safeFragments) {
-      if (current.length + frag.length + 1 > MAX_CHUNK && current.length > 0) {
-        chunks.push(current.trim());
-        current = frag;
-      } else {
-        current += (current ? " " : "") + frag;
+    for (let i = 0; i < sentences.length; i += 2) {
+      const chunk = sentences.slice(i, i + 2).join(" ");
+      // 3. ADD MINIMUM LENGTH FILTER: Skip very short chunks (<15 chars)
+      if (chunk.trim().length >= 15) {
+        chunks.push(chunk.trim());
+      } else if (i + 2 >= sentences.length && chunks.length > 0) {
+        // Append last tiny bit to previous chunk instead of skipping
+        chunks[chunks.length - 1] += " " + chunk.trim();
+      } else if (chunk.trim().length > 0) {
+          chunks.push(chunk.trim());
       }
     }
-    if (current.trim()) chunks.push(current.trim());
 
     return chunks;
   };
@@ -223,8 +195,8 @@ export function useAgentVoice() {
       utterance.onend = () => {
         if (fired) return;
         fired = true;
-        // Small delay between chunks for extra safety and naturalness
-        setTimeout(speakNextChunk, 20);
+        // Minimal delay between chunks for natural flow
+        setTimeout(speakNextChunk, 5);
       };
 
       utterance.onerror = (e) => {

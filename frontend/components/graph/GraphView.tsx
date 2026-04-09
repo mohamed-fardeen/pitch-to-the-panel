@@ -17,7 +17,7 @@ import { AnimatedEdge } from "./AnimatedEdge";
 import { DebugStreamState } from "../analytics/useDebugStream";
 import { MemoryPanelV2 } from "./MemoryPanelV2";
 import { StepTimeline } from "./StepTimeline";
-import { Activity, ShieldCheck, Database, Target, BrainCircuit } from "lucide-react";
+import { Activity, ShieldCheck, Database, Target, BrainCircuit, ListFilter, Cpu, MessageSquareQuote } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const nodeTypes = { agent: AgentNode };
@@ -102,17 +102,21 @@ function GraphContent({ debugStream }: GraphViewProps) {
     // Mark node as completed in track list
     completedNodesRef.current.add(lastExec.node);
 
-    setNodes(nds => nds.map(node => ({
-      ...node,
-      data: {
-        ...node.data,
-        isActive: node.id === lastExec.node,
-        isCompleted: completedNodesRef.current.has(node.id),
-        step: lastExec.step,
-        action: lastExec.action,
-        agentName: lastExec.agentName,
-      }
-    })));
+    setNodes(nds => nds.map(node => {
+      const isActive = node.id === lastExec.node;
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          isActive,
+          isCompleted: completedNodesRef.current.has(node.id),
+          step: lastExec.step,
+          // Only update specific metadata for the node currently being targeted
+          action: isActive ? lastExec.action : node.data.action,
+          agentName: isActive ? lastExec.agentName : node.data.agentName,
+        }
+      };
+    }));
 
     setEdges(eds => eds.map(edge => {
       const isTargetActive = edge.target === lastExec.node;
@@ -177,7 +181,7 @@ function GraphContent({ debugStream }: GraphViewProps) {
                   </div>
                   <div className="flex flex-col">
                      <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest leading-none mb-1">Target Persona</span>
-                     <span className="text-sm font-black text-white antialiased tracking-tight line-clamp-1 max-w-[120px]">{lastExec.agentName || lastExec.node.toUpperCase()}</span>
+                     <span className="text-sm font-black text-white antialiased tracking-tight line-clamp-1 max-w-[120px]">{lastExec.node.toUpperCase()}</span>
                   </div>
                </div>
 
@@ -193,6 +197,85 @@ function GraphContent({ debugStream }: GraphViewProps) {
       </AnimatePresence>
 
       <div className="flex-1 flex relative overflow-hidden">
+        {/* LEFT PANEL: Decision Intelligence */}
+        <div className="w-[380px] border-r border-slate-100 bg-slate-50/30 backdrop-blur-3xl z-30 flex flex-col overflow-hidden">
+           <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-white/40">
+              <div className="flex items-center gap-3">
+                 <Cpu className="w-5 h-5 text-indigo-600" />
+                 <h3 className="text-sm font-black uppercase tracking-widest text-slate-800">Decision Logic</h3>
+              </div>
+              <span className="text-[10px] font-bold text-slate-400">v2.0</span>
+           </div>
+           
+           <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+              {lastExec ? (
+                <>
+                  <div className="space-y-4">
+                     <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Process</span>
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                     </div>
+                     <div className="p-6 bg-slate-900 rounded-[2rem] shadow-xl border border-white/5 space-y-4">
+                        <div className="flex flex-col">
+                           <span className="text-[9px] font-bold text-slate-500 uppercase mb-1">Node Identification</span>
+                           <span className="text-xl font-black text-white tracking-tighter uppercase">{lastExec.node} Node</span>
+                        </div>
+                        <div className="flex flex-col">
+                           <span className="text-[9px] font-bold text-slate-500 uppercase mb-1">Intent Matrix</span>
+                           <span className="text-sm font-medium text-indigo-300 antialiased leading-snug">"{lastExec.action || 'Awaiting selection pattern...'}"</span>
+                        </div>
+                     </div>
+                  </div>
+
+                  <div className="space-y-4">
+                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Neural Parameters</span>
+                     <div className="grid grid-cols-2 gap-4">
+                        {[
+                          { label: 'Step Index', value: `#${lastExec.step}`, icon: ListFilter, color: 'text-blue-500' },
+                          { label: 'Duration', value: `${lastExec.durationMs || 0}ms`, icon: Activity, color: 'text-amber-500' },
+                        ].map((stat, i) => (
+                          <div key={i} className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-2">
+                             <stat.icon className={`w-4 h-4 ${stat.color}`} />
+                             <div className="flex flex-col">
+                                <span className="text-[8px] font-black text-slate-400 uppercase">{stat.label}</span>
+                                <span className="text-sm font-black text-slate-800">{stat.value}</span>
+                             </div>
+                          </div>
+                        ))}
+                     </div>
+                  </div>
+
+                  <div className="space-y-4">
+                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Activity Feed</span>
+                     <div className="space-y-3">
+                        {executions.slice(-4).reverse().map((ex, i) => (
+                          <motion.div 
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            key={ex.id} 
+                            className="flex items-start gap-4 p-4 bg-white/50 border border-slate-100/50 rounded-2xl"
+                          >
+                             <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center shrink-0">
+                                <span className="text-[10px] font-black text-slate-400">{ex.step}</span>
+                             </div>
+                             <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-800 uppercase tracking-tight">{ex.node} → {ex.target || 'Next'}</span>
+                                <span className="text-[11px] text-slate-400 line-clamp-1 italic">"{ex.action || 'Transitioning...'}"</span>
+                             </div>
+                          </motion.div>
+                        ))}
+                     </div>
+                  </div>
+                </>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center py-20 opacity-30 text-center space-y-4">
+                   <div className="w-16 h-16 rounded-full border-4 border-dashed border-slate-300 animate-spin" />
+                   <p className="text-xs font-black uppercase tracking-widest text-slate-400">Awaiting Neural Signals</p>
+                </div>
+              )}
+           </div>
+        </div>
+
         <div className="flex-1 relative z-10">
           <ReactFlow
             nodes={nodes}
@@ -207,7 +290,32 @@ function GraphContent({ debugStream }: GraphViewProps) {
             maxZoom={2}
           >
             <Controls className="!bg-white/80 !backdrop-blur-md !border-slate-100 !shadow-xl !rounded-xl !m-8" />
+            <Background color="#f1f5f9" gap={24} />
           </ReactFlow>
+
+          {/* Activity Feed Overlay (Floating Bot-Left) */}
+          <div className="absolute bottom-12 left-12 z-20 pointer-events-none space-y-4">
+             <AnimatePresence>
+                {lastExec && (
+                   <motion.div
+                     initial={{ opacity: 0, scale: 0.9 }}
+                     animate={{ opacity: 1, scale: 1 }}
+                     exit={{ opacity: 0, scale: 0.9 }}
+                     className="bg-white shadow-2xl rounded-2xl px-6 py-4 border border-slate-100 flex items-center gap-4 ring-8 ring-slate-950/5"
+                   >
+                      <div className="p-2 bg-emerald-100 rounded-lg">
+                         <MessageSquareQuote className="w-4 h-4 text-emerald-600" />
+                      </div>
+                      <div className="flex flex-col">
+                         <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Agent Action</span>
+                         <span className="text-xs font-bold text-slate-700 tracking-tight">
+                            System {lastExec.node.toUpperCase()} is {lastExec.action ? lastExec.action.toLowerCase() : 'processing...'}
+                         </span>
+                      </div>
+                   </motion.div>
+                )}
+             </AnimatePresence>
+          </div>
         </div>
 
         <div className="w-[450px] relative z-30 overflow-hidden border-l border-slate-100 shadow-2xl bg-white/70 backdrop-blur-3xl">

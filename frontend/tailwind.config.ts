@@ -45,6 +45,21 @@ const config: Config = {
         xl: "0.75rem",
         full: "9999px",
       },
+      animation: {
+        "neural-pulse": "neural-pulse 2s infinite ease-in-out",
+        "breathing": "breathing 3s infinite ease-in-out",
+        "pulse-slow": "pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+      },
+      keyframes: {
+        "neural-pulse": {
+          "0%, 100%": { boxShadow: "0 0 20px rgba(99, 102, 241, 0.2)" },
+          "50%": { boxShadow: "0 0 40px rgba(99, 102, 241, 0.5)" },
+        },
+        "breathing": {
+          "0%, 100%": { transform: "scale(1)" },
+          "50%": { transform: "scale(1.03)" },
+        },
+      },
     },
   },
   plugins: [],

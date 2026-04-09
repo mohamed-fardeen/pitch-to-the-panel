@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
 import { useAgentVoice } from "../hooks/useAgentVoice";
 import { PanelState, AgentStatus, AgentRole, ConversationTurn } from "../types/v2_types";
@@ -11,16 +12,19 @@ import { AgentCard } from "../components/AgentCard";
 import { VerdictCard } from "../components/VerdictCard";
 import { Provider } from "../components/ModelSelector";
 import { useDebugStream } from "../components/analytics/useDebugStream";
-import { NodeCard } from "../components/analytics/NodeCard";
 import { FlowTimeline } from "../components/analytics/FlowTimeline";
 import { MemoryPanel } from "../components/analytics/MemoryPanel";
+import { NodeCard } from "../components/analytics/NodeCard";
+import { AgentThoughtsPanel } from "../components/AgentThoughtsPanel";
 import { GraphView } from "../components/graph/GraphView";
+import { AgentIntelligencePanel } from "../components/intelligence/AgentIntelligencePanel";
 
 const API_BASE = "http://localhost:8000/api";
 
 export default function Home() {
   const { isRecording, transcript, startRecording, stopRecording } = useSpeechRecognition();
   const { speak, stopSpeaking } = useAgentVoice();
+  const router = useRouter();
   
   const [provider, setProvider] = useState<Provider>("anthropic");
   const [stage, setStage] = useState<"idle" | "pitching" | "hitl_summary" | "conversation" | "verdict">("idle");
@@ -64,33 +68,66 @@ export default function Home() {
   const [awaitingPitchConfirmation, setAwaitingPitchConfirmation] = useState(false);
   const [awaitingUserInput, setAwaitingUserInput] = useState(false);
   const [originalSummary, setOriginalSummary] = useState("");
+  const [agentMemory, setAgentMemory] = useState<Record<string, any>>({});
+  const [memoryHistory, setMemoryHistory] = useState<any[]>([]);
+  const [activePersonas, setActivePersonas] = useState<Array<{id: string, name: string, role: string}>>([]);
+  const [globalMemory, setGlobalMemory] = useState<any>({});
 
-  const audioQueueRef = useRef<{role: AgentRole, text: string}[]>([]);
-  const isPlayingRef = useRef(false);
+  const [currentlySpeaking, setCurrentlySpeaking] = useState<string | null>(null);
+  const turnQueueRef = useRef<any[]>([]);
+  const isProcessingQueueRef = useRef(false);
 
-  const playNextInQueue = () => {
-    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
-    isPlayingRef.current = true;
-    const next = audioQueueRef.current.shift();
-    if (next) {
-      speak(next.role as AgentRole, next.text, () => {
-        setTimeout(() => {
-          isPlayingRef.current = false;
-          playNextInQueue();
-        }, 100);
-      });
+  const processNextTurn = async () => {
+    if (isProcessingQueueRef.current || turnQueueRef.current.length === 0) return;
+    isProcessingQueueRef.current = true;
+
+    const turn = turnQueueRef.current.shift();
+    if (!turn) {
+      isProcessingQueueRef.current = false;
+      return;
     }
+
+    // 1. Set Status
+    setCurrentlySpeaking(turn.agent_id);
+    updateAgentState(turn.agent_id, turn.content, "streaming", true);
+
+    // 2. Render in Chat
+    setConversation((prev: ConversationTurn[]) => [...prev, {
+      type: turn.turn_type,
+      agent_id: turn.agent_id,
+      agent_name: turn.agent_name,
+      content: turn.content
+    }]);
+
+    // 3. Start TTS
+    speak(turn.role as AgentRole, turn.content, () => {
+      // 4. Clean up after speaking
+      setTimeout(() => {
+        // Clear agent text so bubble resets
+        updateAgentState(turn.agent_id, "", "idle", true);
+        setCurrentlySpeaking(null);
+        isProcessingQueueRef.current = false;
+        processNextTurn(); // Loop
+      }, 100); // Reduced delay for snappier feel
+    });
   };
 
-  const enqueueSpeech = (role: string, text: string) => {
-    audioQueueRef.current.push({ role: role as AgentRole, text });
-    playNextInQueue();
+  const enqueueTurn = (data: any) => {
+    turnQueueRef.current.push({
+      agent_id: data.agent_id,
+      agent_name: data.agent_name || data.name || data.agent_id,
+      role: data.role || "critic",
+      content: data.content,
+      turn_type: data.turn_type || data.type || "persona_response"
+    });
+    processNextTurn();
   };
 
-  const cancelAllSpeech = () => {
+  const cancelAllTurns = () => {
     stopSpeaking();
-    audioQueueRef.current = [];
-    isPlayingRef.current = false;
+    turnQueueRef.current = [];
+    isProcessingQueueRef.current = false;
+    setCurrentlySpeaking(null);
   };
 
   const addLog = (msg: string) => setLogs((prev: string[]) => [...prev, msg]);
@@ -101,15 +138,29 @@ export default function Home() {
 
   const updateAgentState = (agent: string, chunk: string, status: "idle" | "streaming" | "done" | "error", clear: boolean = false) => {
     setPanelState((prev: PanelState) => {
-      const existing = prev[agent] || { text: "", status: "idle" as AgentStatus, role: "critic" as AgentRole, name: agent };
-      return {
-        ...prev,
-        [agent]: {
-          ...existing,
-          text: clear ? chunk : (chunk === "" ? existing.text : existing.text + chunk),
-          status: status === "streaming" ? "speaking" : "idle"
-        }
+      const newState = { ...prev };
+      
+      // Update targeted agent
+      const existing = newState[agent] || { text: "", status: "idle" as AgentStatus, role: "critic" as AgentRole, name: agent };
+      newState[agent] = {
+        ...existing,
+        text: clear ? chunk : (chunk === "" ? existing.text : existing.text + chunk),
+        status: status === "streaming" ? "speaking" : "idle"
       };
+
+      // Set others to 'thinking' if debate is active and we are speaking
+      if (status === "streaming") {
+        Object.keys(newState).forEach(id => {
+          if (id !== agent) newState[id].status = "thinking";
+        });
+      } else if (status === "idle") {
+          // Reset others to idle if no one is speaking
+          Object.keys(newState).forEach(id => {
+            if (newState[id].status === "thinking") newState[id].status = "idle";
+          });
+      }
+
+      return newState;
     });
   };
 
@@ -172,6 +223,7 @@ export default function Home() {
     setVerdictData(null);
     setShowVerdictModal(false);
     setView("panel");
+    setAgentMemory({});
     debugStream.reset();
   };
 
@@ -184,6 +236,7 @@ export default function Home() {
     setConversation([]);
     setPanelState({});
     setShowVerdictModal(false);
+    setAgentMemory({});
     debugStream.reset();
   };
 
@@ -234,8 +287,9 @@ export default function Home() {
       const initialState: PanelState = {};
       initialState["interviewer"] = { text: "", status: "idle", role: "host", name: "Lead Interviewer" };
       if (data.personas && Array.isArray(data.personas)) {
+        setActivePersonas(data.personas);
         data.personas.forEach((p: any) => {
-          initialState[p.id] = { text: "", status: "idle", role: "critic", name: p.name, avatarUrl: p.avatar };
+          initialState[p.id] = { text: "", status: "idle", role: p.role as AgentRole, name: p.name, avatarUrl: p.avatar };
         });
       }
       setPanelState(initialState);
@@ -244,6 +298,11 @@ export default function Home() {
     eventSource.addEventListener("agent_start", (e: any) => {
         const data = JSON.parse(e.data);
         setActiveAgent({ id: data.agent_id, name: data.name });
+    });
+
+    eventSource.addEventListener("agent_token", (e: any) => {
+      const data = JSON.parse(e.data);
+      updateAgentState(data.agent_id, data.token, "streaming");
     });
 
     eventSource.addEventListener("agent_turn", (e: any) => {
@@ -256,26 +315,15 @@ export default function Home() {
         setWaitingForAnswer(true);
       }
       
-      if (data.token) {
-        updateAgentState(data.agent_id, data.token, "streaming");
-      } else if (data.content) {
-        updateAgentState(data.agent_id, data.content, "done", true);
-        enqueueSpeech(data.agent_id, data.content);
-        
-        setConversation((prev: ConversationTurn[]) => [...prev, {
-          type: data.turn_type || data.type || "persona_response",
-          agent_id: data.agent_id,
-          agent_name: data.agent_name || data.name || data.agent_id,
-          content: data.content
-        }]);
+      if (data.content) {
+        enqueueTurn(data);
       }
       debugStream.pushEvent("agent_turn", data);
     });
 
     eventSource.addEventListener("waiting_for_pitcher", (e: any) => {
       const data = JSON.parse(e.data);
-      console.log("Event received: waiting_for_pitcher", data);
-      setWaitingForAnswer(true);
+      console.info("[UI] awaiting_user_input triggered");
       setAwaitingUserInput(true);
       setCurrentQuestion(data.question);
       setManualText("");
@@ -290,10 +338,14 @@ export default function Home() {
 
     eventSource.addEventListener("verdict_complete", (e: any) => {
       const data = JSON.parse(e.data);
-      if (!verdictData) setVerdictData(data);
+      setVerdictData(data);
       setStage("verdict");
-      setShowVerdictModal(true);
       setIsStreaming(false);
+
+      // Navigate to report page after a short delay
+      setTimeout(() => {
+        router.push(`/report?sessionId=${sessionId}`);
+      }, 1500);
     });
 
     // Named 'error' events are fatal errors sent by the server explicitly
@@ -319,6 +371,15 @@ export default function Home() {
         const data = JSON.parse(e.data);
         debugStream.pushEvent("debug_node", data);
       } catch {}
+    });
+
+    // memory_update events update agent private thoughts
+    eventSource.addEventListener("memory_update", (e: any) => {
+      const data = JSON.parse(e.data);
+      console.log("Memory update:", data);
+      if (data.agent_memory) setAgentMemory(data.agent_memory);
+      if (data.memory_history) setMemoryHistory(data.memory_history);
+      if (data.memory) setGlobalMemory(data.memory);
     });
 
     // onerror fires on transient network issues — don't close if SSE is still trying to reconnect
@@ -385,26 +446,68 @@ export default function Home() {
     const ans = manualText;
     setAwaitingUserInput(false);
     
+    console.log("[UI] answer submitted:", ans.substring(0, 50));
     try {
-      console.log("Sending answer to session:", sessionId);
       await fetch(`${API_BASE}/conversation/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId,
-          message: ans
+          message: ans,
+          interrupt: false
         })
       });
-      
+
+      // Render user answer in chat instantly
+      setConversation((prev: ConversationTurn[]) => [
+        ...prev, 
+        { type: "pitcher_response", agent_name: pitcherId || "Alex Chen", content: ans }
+      ]);
+
       setManualText("");
-    } catch(e) {}
+    } catch(e) {
+      console.error("Failed to submit answer:", e);
+    }
+  };
+
+  const submitInterrupt = async () => {
+    if (!manualText) return;
+    const msg = manualText;
+    setIsInterrupting(false);
+    
+    // 1. Clear speech/queue immediately
+    cancelAllTurns();
+    addLog("Interrupting panel...");
+
+    console.log("[UI] interrupt submitted:", msg.substring(0, 50));
+    try {
+      await fetch(`${API_BASE}/conversation/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          message: msg,
+          interrupt: true
+        })
+      });
+
+      // 2. Add user message to chat instantly
+      setConversation((prev: ConversationTurn[]) => [
+        ...prev, 
+        { type: "pitcher_interrupt", agent_name: pitcherId || "Alex Chen", content: msg }
+      ]);
+
+      setManualText("");
+    } catch(e) {
+      console.error("Failed to submit interrupt:", e);
+    }
   };
 
   const handleInterrupt = () => {
-    cancelAllSpeech();
-    setWaitingForAnswer(true);
-    setCurrentQuestion("Jumping in...");
-    setIsAnsweringInterrupt(true);
+    cancelAllTurns();
+    setIsInterrupting(true);
+    setManualText("");
+    console.log("[UI] interrupt flow triggered");
   };
 
   const endConversation = async () => {
@@ -441,7 +544,12 @@ export default function Home() {
     const text = manualText;
     setIsRebutting(true);
     setManualText("");
+
     try {
+      // 1. Cancel ongoing speech for immediate impact
+      cancelAllTurns();
+
+      // 2. Submit rebuttal
       const res = await fetch(`${API_BASE}/conversation/rebuttal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -454,15 +562,25 @@ export default function Home() {
         })
       });
       const data = await res.json();
-      updateAgentState(challengingAgentId, `\n\n💬 Reply: ${data.agent_response}`, "done");
-      enqueueSpeech(challengingAgentId, data.agent_response);
+      
+      // 3. Render user interruption in chat
       setConversation((prev: ConversationTurn[]) => [
         ...prev, 
-        { type: "pitcher_interrupt", agent_name: pitcherId || "Alex Chen", content: text },
-        { type: "persona_response", agent_name: data.name || challengingAgentId, content: data.agent_response }
+        { type: "pitcher_interrupt", agent_name: pitcherId || "Alex Chen", content: text }
       ]);
-    } catch(e) {} finally {
+      
+      // 4. Enqueue the AI rebuttal response
+      enqueueTurn({
+        agent_id: challengingAgentId,
+        agent_name: data.name || challengingAgentId,
+        content: data.agent_response,
+        type: "persona_response"
+      });
+    } catch(e) {
+      console.error("Rebuttal failed:", e);
+    } finally {
       setIsRebutting(false);
+      setChallengingAgentId(null);
     }
   };
 
@@ -621,6 +739,16 @@ export default function Home() {
                     </div>
                  </div>
               </div>
+            </div>
+          ) : view === "intelligence" ? (
+            <div className="p-8 h-full">
+              <AgentIntelligencePanel
+                memory={globalMemory}
+                agentMemory={agentMemory}
+                memoryHistory={memoryHistory}
+                activeAgentId={currentlySpeaking}
+                personas={activePersonas}
+              />
             </div>
           ) : view === "analytics" ? (
             <div className="p-16 max-w-[1600px] mx-auto w-full space-y-10 duration-700 h-full overflow-y-auto custom-scrollbar">
@@ -814,30 +942,46 @@ export default function Home() {
                     </div>
                   </div>
                ) : stage === "conversation" ? (
-                  <div className="h-full flex px-12 pb-12 pt-6 overflow-hidden gap-12 animate-in fade-in duration-700">
-                    <div className="flex-[0.8] overflow-y-auto pr-6 custom-scrollbar pb-12">
-                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                  <div className="h-full flex px-12 pb-12 pt-6 overflow-hidden gap-6 animate-in fade-in duration-700">
+                    {/* Agent Cards - Left Column */}
+                    <div className="flex-[0.7] overflow-y-auto pr-6 custom-scrollbar pb-12">
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                          {Object.entries(panelState).map(([id, agent]) => (
                             <AgentCard key={id} id={id} name={agent.name} role={agent.role} status={agent.status} text={agent.text} avatarUrl={agent.avatarUrl} isChallenged={challengingAgentId === id} />
                          ))}
                       </div>
                     </div>
-                    <div className="flex-1 flex flex-col h-full bg-white border border-slate-100 rounded-[3rem] shadow-[0_20px_50px_rgba(0,0,0,0.04)] overflow-hidden">
+
+                    {/* Live Feed - Middle Column */}
+                    <div className="flex-[1.2] flex flex-col h-full bg-white border border-slate-100 rounded-[3rem] shadow-[0_20px_50px_rgba(0,0,0,0.04)] overflow-hidden">
                        <LiveFeed 
                           turns={conversation} 
                           agents={Object.values(panelState)} 
                           onJumpIn={handleInterrupt} 
                           isRecording={isRecording}
                           awaitingUserInput={awaitingUserInput}
+                          isInterrupting={isInterrupting}
                           userInput={manualText}
                           onUserInputChange={(val) => setManualText(val)}
                           onSendAnswer={submitAnswer}
+                          onSendInterrupt={submitInterrupt}
+                          onCancelInterrupt={() => setIsInterrupting(false)}
                           currentQuestion={currentQuestion}
-                          isAnsweringInterrupt={isAnsweringInterrupt}
                           isStreaming={isStreaming}
                           activeAgent={activeAgent}
                           onSetAwaitingUserInput={setAwaitingUserInput}
                         />
+                    </div>
+
+                    {/* Agent Thoughts - Right Column */}
+                    <div className="flex-[0.6]">
+                      <AgentThoughtsPanel 
+                        agentMemory={agentMemory}
+                        agentsConfig={Object.keys(panelState).reduce((acc, id) => {
+                          acc[id] = { name: panelState[id].name, role: panelState[id].role };
+                          return acc;
+                        }, {} as Record<string, { name: string; role: string }>)}
+                      />
                     </div>
                   </div>
                ) : stage === "verdict" && verdictData ? (
@@ -852,8 +996,11 @@ export default function Home() {
         {/* Floating Actions */}
         {stage === "conversation" && (
            <div className="fixed bottom-12 left-1/2 -translate-x-1/2 lg:left-[calc(50%+144px)] z-50 flex items-center gap-6 duration-700">
-              <button 
-                onClick={endConversation} 
+               <button 
+                onClick={() => {
+                  cancelAllTurns();
+                  endConversation();
+                }} 
                 className="w-16 h-16 rounded-full bg-white border border-slate-100 shadow-2xl text-slate-300 hover:text-rose-500 hover:border-rose-100 transition-all flex items-center justify-center group"
                 title="End Debate"
               >

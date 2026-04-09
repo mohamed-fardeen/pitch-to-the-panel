@@ -1,16 +1,28 @@
 import React from "react";
 import { NodeExecution } from "./useDebugStream";
 
+const NODE_DISPLAY_NAMES: Record<string, string> = {
+  pitch_refiner: "Pitch Refiner",
+  controller: "Controller",
+  persona: "Persona",
+  pitcher: "Pitcher",
+  tool: "Tool",
+  reflection: "Reflection",
+  memory_update: "Memory Update",
+  final: "Final",
+  error: "Error",
+};
+
 const NODE_COLORS: Record<string, { active: string; visited: string; text: string }> = {
   pitch_refiner: { active: "#7C3AED", visited: "#EDE9FE", text: "#5B21B6" },
-  controller:    { active: "#2563EB", visited: "#DBEAFE", text: "#1D4ED8" },
-  persona:       { active: "#059669", visited: "#D1FAE5", text: "#065F46" },
-  pitcher:       { active: "#D97706", visited: "#FEF3C7", text: "#92400E" },
-  tool:          { active: "#0891B2", visited: "#CFFAFE", text: "#164E63" },
-  reflection:    { active: "#7C3AED", visited: "#EDE9FE", text: "#5B21B6" },
+  controller: { active: "#2563EB", visited: "#DBEAFE", text: "#1D4ED8" },
+  persona: { active: "#059669", visited: "#D1FAE5", text: "#065F46" },
+  pitcher: { active: "#D97706", visited: "#FEF3C7", text: "#92400E" },
+  tool: { active: "#0891B2", visited: "#CFFAFE", text: "#164E63" },
+  reflection: { active: "#7C3AED", visited: "#EDE9FE", text: "#5B21B6" },
   memory_update: { active: "#6B7280", visited: "#F3F4F6", text: "#374151" },
-  final:         { active: "#DC2626", visited: "#FEE2E2", text: "#991B1B" },
-  error:         { active: "#DC2626", visited: "#FEE2E2", text: "#991B1B" },
+  final: { active: "#DC2626", visited: "#FEE2E2", text: "#991B1B" },
+  error: { active: "#DC2626", visited: "#FEE2E2", text: "#991B1B" },
 };
 
 const fallbackColor = { active: "#6B7280", visited: "#F3F4F6", text: "#374151" };
@@ -23,6 +35,7 @@ interface Props {
 
 export function NodeCard({ execution, isActive, index }: Props) {
   const colors = NODE_COLORS[execution.node] ?? fallbackColor;
+  const displayName = NODE_DISPLAY_NAMES[execution.node] ?? execution.node;
 
   const cardStyle: React.CSSProperties = {
     padding: "12px 16px",
@@ -56,7 +69,6 @@ export function NodeCard({ execution, isActive, index }: Props) {
 
   return (
     <div style={cardStyle}>
-      {/* Step number column */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
         <div style={dotStyle} />
         <span style={{ fontSize: "11px", color: "#9CA3AF", fontWeight: 500 }}>
@@ -64,7 +76,6 @@ export function NodeCard({ execution, isActive, index }: Props) {
         </span>
       </div>
 
-      {/* Main content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
           <span
@@ -77,7 +88,7 @@ export function NodeCard({ execution, isActive, index }: Props) {
               borderRadius: "6px",
             }}
           >
-            {execution.node}
+            {displayName}
           </span>
 
           {execution.agentName && (
@@ -122,7 +133,6 @@ export function NodeCard({ execution, isActive, index }: Props) {
         )}
       </div>
 
-      {/* Duration badge */}
       {execution.durationMs !== null && (
         <span
           style={{

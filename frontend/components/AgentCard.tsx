@@ -26,19 +26,24 @@ export function AgentCard({ id, name, role, status, text, avatarUrl, isChallenge
           : "bg-white border-slate-100 shadow-sm hover:shadow-lg hover:border-slate-200"
       }`}
     >
-      {/* Speaking/Challenged Badge */}
+       {/* Speaking/Challenged/Thinking Badge */}
       <div className="absolute top-8 left-0 right-0 flex justify-center px-6 pointer-events-none">
          {isSpeaking ? (
             <div className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-500 rounded-full shadow-lg shadow-emerald-500/20 duration-300">
                <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></div>
                <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Speaking</span>
             </div>
-         ) : isChallenged && (
+         ) : isChallenged ? (
             <div className="flex items-center gap-1.5 px-4 py-1.5 bg-rose-500 rounded-full shadow-lg shadow-rose-500/20 duration-300">
                <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
                <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Challenged</span>
             </div>
-         )}
+         ) : status === "thinking" ? (
+            <div className="flex items-center gap-1.5 px-4 py-1.5 bg-slate-800 rounded-full shadow-lg shadow-slate-900/20 duration-300">
+               <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-ping"></div>
+               <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Thinking...</span>
+            </div>
+         ) : null}
       </div>
 
       <div className="relative mt-8 mb-6">

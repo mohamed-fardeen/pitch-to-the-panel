@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
-import { ConversationTurn, AgentRole } from "../types/v2_types";
+import { ConversationTurn } from "../types/v2_types";
 
 interface LiveFeedProps {
   turns: ConversationTurn[];
@@ -9,11 +9,13 @@ interface LiveFeedProps {
   onJumpIn?: () => void;
   isRecording?: boolean;
   awaitingUserInput?: boolean;
+  isInterrupting?: boolean;
   userInput?: string;
   onUserInputChange?: (val: string) => void;
   onSendAnswer?: () => void;
+  onSendInterrupt?: () => void;
+  onCancelInterrupt?: () => void;
   currentQuestion?: string;
-  isAnsweringInterrupt?: boolean;
   isStreaming?: boolean;
   activeAgent?: { id: string, name: string } | null;
   onSetAwaitingUserInput?: (val: boolean) => void;
@@ -25,11 +27,13 @@ export function LiveFeed({
   onJumpIn, 
   isRecording,
   awaitingUserInput,
+  isInterrupting,
   userInput,
   onUserInputChange,
   onSendAnswer,
+  onSendInterrupt,
+  onCancelInterrupt,
   currentQuestion,
-  isAnsweringInterrupt,
   isStreaming,
   activeAgent: streamAgent,
   onSetAwaitingUserInput
@@ -75,8 +79,13 @@ export function LiveFeed({
           <>
             {turns.map((turn, i) => {
               const agent = getAgentData(turn.agent_name || "");
-              const isPitcher = turn.agent_name === "Pitcher" || turn.agent_name === "Alex Chen";
+              const isPitcher = turn.agent_name === "Pitcher" || turn.agent_name === "Alex Chen" || turn.agent_name === "Pitcher (Interrupt)";
               
+              // Duplication Check: If this turn is already being shown in the Active Streaming Bubble, don't show it here.
+              if (activeAgent && i === turns.length - 1 && turn.agent_id === activeAgent.agent_id && turn.content === activeAgent.text) {
+                return null;
+              }
+
               return (
                 <div key={i} className={`flex flex-col gap-2 transition-all duration-700`}>
                   <div className="flex items-center gap-3 ml-1">
@@ -126,13 +135,13 @@ export function LiveFeed({
         )}
       </div>
 
-       {/* Floating Action Container */}
+       {/* Floating Action Container - 1. ANSWER INPUT (HITL) */}
       <div className="absolute bottom-8 left-0 right-0 px-10 pointer-events-none flex justify-center z-20">
-        {awaitingUserInput ? (
+        {awaitingUserInput && (
           <div className="pointer-events-auto w-full max-w-2xl bg-white/95 backdrop-blur-xl rounded-[2.5rem] p-4 shadow-2xl border border-emerald-500/20 flex flex-col gap-3 animate-in slide-in-from-bottom-5">
             {currentQuestion && (
               <div className="px-4 py-2 bg-emerald-50/50 rounded-2xl border border-emerald-100/30">
-                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">💬 Direct Question:</p>
+                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">💬 Answer as Founder:</p>
                 <p className="text-sm font-medium text-slate-700 leading-relaxed italic">"{currentQuestion}"</p>
               </div>
             )}
@@ -140,7 +149,7 @@ export function LiveFeed({
               <input
                 value={userInput}
                 onChange={(e) => onUserInputChange?.(e.target.value)}
-                placeholder={isAnsweringInterrupt ? "What is your counter-argument?..." : "Type your strategic response..."}
+                placeholder="Type your strategic response..."
                 className="flex-1 bg-slate-50 border-none rounded-2xl py-5 px-8 text-slate-800 placeholder:text-slate-300 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 transition-all outline-none text-base font-medium"
                 autoFocus
                 onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), onSendAnswer?.())}
@@ -154,7 +163,10 @@ export function LiveFeed({
               </button>
             </div>
           </div>
-        ) : (
+        )}
+
+        {/* 2. JUMP IN BUTTON (Always available unless already interrupting) */}
+        {!isInterrupting && !awaitingUserInput && (
           <div className="flex gap-4 pointer-events-auto items-center">
             {onJumpIn && (
               <button 
@@ -168,7 +180,6 @@ export function LiveFeed({
               </button>
             )}
             
-            {/* Added a 'Respond' fallback button to force the input box open if needed */}
             <button 
               onClick={() => {
                 onUserInputChange?.("");
@@ -181,7 +192,50 @@ export function LiveFeed({
             </button>
           </div>
         )}
+
+        {/* Show Jump In Button even if awaitingUserInput is true (separate flow) */}
+        {!isInterrupting && awaitingUserInput && (
+          <div className="pointer-events-auto fixed bottom-24 right-16">
+            <button 
+              onClick={onJumpIn}
+              className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 hover:text-emerald-600 border border-slate-200 shadow-lg flex items-center justify-center hover:scale-110 transition-all"
+              title="Interrupt Discussion"
+            >
+              <span className="material-symbols-outlined text-xl">bolt</span>
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* 3. INTERRUPT PANEL (Modal Overlay) */}
+      {isInterrupting && (
+        <div className="absolute inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-end justify-center p-10 animate-in fade-in">
+          <div className="w-full max-w-2xl bg-white rounded-[3rem] p-8 shadow-2xl space-y-6 animate-in slide-in-from-bottom-10 pointer-events-auto">
+            <div className="flex justify-between items-center px-2">
+              <h3 className="text-sm font-bold text-[#006948] uppercase tracking-[0.2em]">Interrupt Panel</h3>
+              <button onClick={onCancelInterrupt} className="text-slate-400 hover:text-slate-600">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="space-y-4">
+               <textarea 
+                  value={userInput}
+                  onChange={(e) => onUserInputChange?.(e.target.value)}
+                  placeholder="Inject your thoughts into the discussion..."
+                  className="w-full h-32 bg-slate-50 rounded-[2rem] p-8 text-slate-800 placeholder:text-slate-300 outline-none focus:ring-2 focus:ring-emerald-500/10 resize-none font-medium"
+                  autoFocus
+               />
+               <button 
+                  onClick={onSendInterrupt}
+                  disabled={!userInput?.trim()}
+                  className="w-full py-6 bg-[#006948] hover:bg-[#005a3e] text-white rounded-full font-bold uppercase tracking-widest shadow-xl shadow-emerald-900/10 disabled:opacity-30 transition-all active:scale-95"
+               >
+                  Send Interruption
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Typing Indicator */}
       {isStreaming && streamAgent && !activeAgent && (

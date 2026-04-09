@@ -11,6 +11,7 @@ interface SidebarProps {
 export function Sidebar({ onNewPitch, onViewChange, currentView = "panel" }: SidebarProps) {
   const navItems = [
     { id: "panel", label: "Panel", icon: "group" },
+    { id: "intelligence", label: "Agent Minds", icon: "psychology" },
     { id: "graph", label: "Agent Graph", icon: "hub" },
     { id: "transcripts", label: "Transcripts", icon: "chat" },
     { id: "library", label: "Library", icon: "book" },

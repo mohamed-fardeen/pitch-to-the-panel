@@ -1,6 +1,7 @@
 import json
 import asyncio
 import os
+import copy
 from typing import AsyncGenerator, Tuple, Dict, List, Optional
 from prompts import (
     CONTROLLER_PROMPT,
@@ -23,54 +24,29 @@ from prompts import (
 
 AGENTS_CONFIG = {
     "vc": {
-        "name": "Arjun Mehta",
+        "name": "Arjun (VC)",
         "role": "Venture Capitalist",
-        "system_prompt": "Senior analyst at Elevation Capital. Focus on TAM, moats, and Series A readiness."
+        "system_prompt": "ROI focused. Challenges weak business models. Direct and sharp."
     },
     "enthusiastic": {
-        "name": "Priya Sharma",
-        "role": "Product Manager",
-        "system_prompt": "Ex-meta PM. Focus on user adoption, emotional resonance, and viral loops."
+        "name": "Priya (Designer)",
+        "role": "Design Strategist",
+        "system_prompt": "UX/UI focused. Optimistic and creative. Suggests improvements."
     },
     "hostile": {
-        "name": "Ravi Kumar",
+        "name": "Ravi (Operator)",
         "role": "Operations Manager",
-        "system_prompt": "Jaded logistics expert. Focus on burn rate, operational inefficiencies, and 'real world' failure points."
+        "system_prompt": "Execution and risk focused. Cautious and skeptical. Highlights failures."
     },
     "expert": {
-        "name": "Dr. Ananya Iyer",
-        "role": "Industry Consultant",
-        "system_prompt": "Academic rigor. Focus on technical feasibility, research backing, and long-term defensibility."
-    },
-    "competitor": {
-        "name": "Meera Pillai",
-        "role": "Marketing Manager",
-        "system_prompt": "Aggressive growth hacker. Focus on switching costs, acquisition cost, and competitive landscape."
+        "name": "Expert",
+        "role": "Technical Consultant",
+        "system_prompt": "Technical validity focused. Analytical and objective. Fact-checks claims."
     },
     "beginner": {
-        "name": "Kiran",
-        "role": "Student",
-        "system_prompt": "Target consumer. Focus on simplicity, clarity, and 'why would I use this?'"
-    },
-    "suresh": {
-        "name": "Suresh Nair",
-        "role": "Medical Store Owner",
-        "system_prompt": "Ground-level entrepreneur. Focus on unit economics and practical everyday utility."
-    },
-    "design_critic": {
-        "name": "Aisha Thomas",
-        "role": "Design Strategist",
-        "system_prompt": "UX purist. Focus on trust, interface psychology, and brand storytelling."
-    },
-    "dr_iyer_design": {
-        "name": "Dr. Ananya Iyer (Design)",
-        "role": "Technical Design Critic",
-        "system_prompt": "Academic precision in UI/UX and product psychology."
-    },
-    "meera_design": {
-        "name": "Meera Pillai (Design)",
-        "role": "Design Client",
-        "system_prompt": "Customer-first design requirements and budget management."
+        "name": "Kiran (Beginner)",
+        "role": "Curious Consumer",
+        "system_prompt": "Clarity focused. Confused and curious. Asks basic questions."
     },
     "interviewer": {
         "name": "Lead Strategist",
@@ -87,16 +63,11 @@ from typing import Literal, Optional, AsyncGenerator, Tuple, Dict, List, Annotat
 import operator
 
 AGENT_GOALS = {
-    "vc":           "Identify scalable business potential and market size. Demand traction, moats and unit economics.",
-    "enthusiastic": "Explore user excitement and viral potential. Champion the emotional hook.",
-    "hostile":      "Expose risks, inefficiencies, and realistic failure points. Assume it will break.",
-    "expert":       "Validate technical feasibility and long-term defensibility with academic rigor.",
-    "competitor":   "Analyze competitive threats, switching costs, and strategic positioning.",
-    "beginner":     "Check clarity and usability for normal everyday users. Speak for the confused.",
-    "suresh":       "Evaluate practical real-world viability and unit economics at ground level.",
-    "design_critic":"Assess trust signals, UX psychology, and emotional brand connection.",
-    "dr_iyer_design": "Critique product-design precision, cognitive load, and technical UX rigor.",
-    "meera_design": "Represent client expectations, budget constraints, and design ROI.",
+    "vc":           "Identify ROI potential and market size. Direct and sharp business model critique.",
+    "enthusiastic": "Improve UX and emotional engagement. Creative and optimistic suggestions.",
+    "hostile":      "Expose execution risks and operational failure points. Skeptical and cautious.",
+    "expert":       "Validate technical feasibility and fact-check claims with analytical objectivity.",
+    "beginner":     "Verify simplicity and clarity. Ask fundamental questions about purpose and usability.",
     "interviewer":  "Guide the session with strategic questions. Surface hidden assumptions."
 }
 
@@ -113,37 +84,53 @@ class ControllerDecision(BaseModel):
 
 sessions: dict[str, dict] = {}
     
-def handle_interrupt_if_present(state: FocusGroupState, session: dict) -> dict | None:
+def check_manual_interrupt(state: FocusGroupState, session: dict) -> dict | None:
     """
-    Checks both state and session for a live pitcher interrupt.
-    If found, clears the flag everywhere and returns the interrupt turn dict.
-    If not found, returns None — caller should continue normally.
+    Checks for a manual 'Jump In' interruption via interrupt_event.
+    Injects an acknowledgement from the current/last speaker + the founder message.
     """
-    pitcher_interrupt = state.get("pitcher_interrupt") or session.get("pitcher_interrupt", False)
-    if not pitcher_interrupt:
-        return None
-    
-    msg = state.get("pitcher_message", "") or session.get("pitcher_message", "")
-    
-    # Clear from session
-    if "pitcher_interrupt" in session:
-        session["pitcher_interrupt"] = False
-        session["pitcher_message"] = ""
-    
-    new_turn = {
-        "type": "pitcher_response", # Standardized (Issue 5)
-        "agent_name": "Pitcher",
-        "content": msg
-    }
-    
-    print(f"[INTERRUPT] pitcher jumped in: '{msg[:80]}'")
-    return {
-        "conversation": [new_turn],
-        "pitcher_interrupt": False,
-        "pitcher_message": "",
-        "awaiting_user_input": False,
-        "input_type": "pitcher_response" # FIXED: Standardized type
-    }
+    events = session.get("events", {})
+    if "interrupt_event" in events and events["interrupt_event"].is_set():
+        msg = session.get("interrupt_message", "Manual interruption")
+        events["interrupt_event"].clear()
+        
+        last_agent_id = state.get("last_persona_used", "interviewer")
+        agent = AGENTS_CONFIG.get(last_agent_id, {"name": "Panelist", "role": "Expert"})
+        
+        import random
+        acks = [
+            f"Hold on — let's hear from the founder. Go ahead.",
+            f"Looks like you want to add something — please, go ahead.",
+            f"Wait, I see the founder jumping in. Let's pause and listen.",
+            f"Ah, an interjection. Please continue, we're listening.",
+            f"Interesting point, please explain that further."
+        ]
+        ack_text = random.choice(acks)
+        
+        print(f"[INTERRUPT] {last_agent_id} acknowledging: {ack_text}")
+        
+        ack_turn = {
+            "type": "persona_response",
+            "agent_id": last_agent_id,
+            "agent_name": agent["name"],
+            "content": ack_text
+        }
+        
+        founder_turn = {
+            "type": "pitcher_response",
+            "agent_name": "Founder (Jump In)",
+            "content": msg
+        }
+        
+        return {
+            "conversation": [ack_turn, founder_turn],
+            "action": "ask_persona",
+            "action_input": {"target": None}, # Force controller to pick next based on this new context
+            "pitcher_interrupt": False,
+            "awaiting_user_input": False,
+            "last_user_interrupt": msg
+        }
+    return None
 
 # Feature 4: Firecrawl MCP Setup
 try:
@@ -455,16 +442,40 @@ async def controller_node(state: FocusGroupState):
     """The central brain that decides the next action."""
     session = sessions.get(state["session_id"], {})
     
-    interrupt_result = handle_interrupt_if_present(state, session)
+    # FORCE END CHECK - Immediate termination
+    if session.get("force_end"):
+        print("[FORCE END TRIGGERED] Controller terminating")
+        return {
+            "action": "end",
+            "awaiting_user_input": False,
+            "pitcher_interrupt": False
+        }
+    
+    interrupt_result = check_manual_interrupt(state, session)
     if interrupt_result:
         return interrupt_result
+
+    # RULE -1: External End signal (Fix: End Button)
+    if session.get("action") == "end_session":
+        # Clear it from session to prevent double-firing if needed, 
+        # but the graph will break anyway.
+        session["action"] = None 
+        return {
+            "action": "end_session",
+            "awaiting_user_input": False,
+            "pitcher_interrupt": False
+        }
+
     mode = state.get("mode", "venture")
     state_updates = {}
 
     # FIX 1: DEFINE missing variables in controller_node
-    active_panel   = session.get("active_panel", [])
+    # FIX 3: GUARANTEE active_panel exists in state
+    active_panel = state.get("domain", {}).get("active_panel")
     if not active_panel:
-        raise ValueError("Critical Error: active_panel is empty.") # FIX 6: Safety check
+        active_panel = ["vc", "expert", "enthusiastic"]
+        state["domain"] = state.get("domain", {})
+        state["domain"]["active_panel"] = active_panel
 
     reflection     = state.get("reflection", {})
     global_mem     = state.get("memory", {})
@@ -594,14 +605,11 @@ async def controller_node(state: FocusGroupState):
     if len(global_mem.get("strengths", [])) >= 3 and "vc" in active_panel and last_used != "vc":
         return _ctrl_return("ask_persona", {"target": "vc"})
 
-    # FIX 3: Skip LLM for routine rotation (let LLM in every 3rd step for variety)
-    import random
-    current_step = state.get("step_count", 0)
     context = build_conversation_context({"conversation": state.get("conversation", [])}, last_n=10)
     history_str = ", ".join(state.get("action_history", [])[-5:])
 
-    # FIX 3: Dynamic routing probability
-    if next_candidate and next_candidate != last_used and random.random() > 0.3:
+    # REMOVED: Randomness for demo stability
+    if next_candidate and next_candidate != last_used:
         return _ctrl_return("ask_persona", {"target": next_candidate})
 
     formatted_prompt = CONTROLLER_PROMPT.format(
@@ -680,7 +688,11 @@ async def controller_node(state: FocusGroupState):
 
     except Exception as e:
         print(f"[CONTROLLER ERROR] Fallback engaged: {e}")
-        fallback_personas = session.get("active_panel", []) # FIXED
+        # FIX 1: Remove session dependency from fallback
+        fallback_personas = state.get("domain", {}).get("active_panel", [])
+        if not fallback_personas:
+            fallback_personas = ["vc", "expert", "enthusiastic"]
+            
         last_used = state.get("last_persona_used", "")
         try:
             last_idx = fallback_personas.index(last_used)
@@ -701,7 +713,16 @@ async def persona_node(state: FocusGroupState):
     """Executes a single persona response."""
     session = sessions.get(state["session_id"], {})
     
-    interrupt_result = handle_interrupt_if_present(state, session)
+    # FORCE END CHECK - Immediate termination
+    if session.get("force_end"):
+        print("[FORCE END TRIGGERED] Persona terminating")
+        return {
+            "action": "end",
+            "awaiting_user_input": False,
+            "pitcher_interrupt": False
+        }
+    
+    interrupt_result = check_manual_interrupt(state, session)
     if interrupt_result:
         return interrupt_result
 
@@ -714,10 +735,12 @@ async def persona_node(state: FocusGroupState):
     if persona_id not in AGENTS_CONFIG:
         raise ValueError(f"Invalid persona selected: {persona_id}")
 
-    agent_memory = state.get("agent_memory", {}).copy()
+    import copy
+    agent_memory = copy.deepcopy(state.get("agent_memory", {}))
     if persona_id not in agent_memory:
         agent_memory[persona_id] = {
-            "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": []
+            "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [],
+            "concerns": [], "agent_opinions": [], "disagreements": []
         }
     
     agent_mem = agent_memory.get(persona_id, {})
@@ -736,6 +759,25 @@ async def persona_node(state: FocusGroupState):
     )
 
     global_mem  = state.get("memory", {})
+    
+    # ENHANCEMENT: Format priority_context with agent-specific angle
+    if priority_context:
+        agent_angle_map = {
+            "vc": f"From your ROI perspective, the key blocker is: {priority_context}",
+            "enthusiastic": f"The user experience angle here is: {priority_context}",
+            "hostile": f"The operational risk you spotted is: {priority_context}",
+            "expert": f"The technical validity question is: {priority_context}",
+            "competitor": f"The competitive/growth risk is: {priority_context}",
+            "beginner": f"The clarity issue you found is: {priority_context}",
+            "suresh": f"The real-world execution problem is: {priority_context}",
+            "design_critic": f"The trust/UX issue is: {priority_context}"
+        }
+        # Add agent concerns to priority for richer context
+        agent_concerns = agent_mem.get("concerns", [])
+        if agent_concerns:
+            priority_context = agent_angle_map.get(persona_id, priority_context) + f" Your private concern: {agent_concerns[0]}"
+        else:
+            priority_context = agent_angle_map.get(persona_id, priority_context)
 
     # PART 3 — Memory-driven tone
     own_risks     = agent_mem.get("risks", [])
@@ -766,8 +808,30 @@ async def persona_node(state: FocusGroupState):
     # PART 2 — Agent goal
     agent_goal = AGENT_GOALS.get(persona_id, "Evaluate the pitch from your unique perspective.")
 
+    # ENHANCEMENT: Format agent_memory more actionably for the agent
+    agent_memory_formatted = json.dumps(agent_mem)
+    if agent_mem.get("concerns") or agent_mem.get("agent_opinions") or agent_mem.get("disagreements"):
+        formatted_concerns = agent_mem.get("concerns", [])
+        formatted_opinions = agent_mem.get("agent_opinions", [])
+        formatted_disagreements = agent_mem.get("disagreements", [])
+        
+        agent_concerns_str = "\n".join([f"⚠ {c}" for c in formatted_concerns[:3]]) if formatted_concerns else ""
+        agent_opinions_str = "\n".join([f"💭 {o}" for o in formatted_opinions[:3]]) if formatted_opinions else ""
+        agent_disagreements_str = "\n".join([f"⚖ {d}" for d in formatted_disagreements[:2]]) if formatted_disagreements else ""
+        
+        agent_memory_formatted = f"""DETAILED PRIVATE STATE:
+Concerns: {agent_concerns_str or "(none)"}
+Opinions: {agent_opinions_str or "(none)"}
+Disagreements: {agent_disagreements_str or "(none)"}
+Full State: {json.dumps(agent_mem)}"""
+
     # PERSONA MEMORY DEBUG
     print(f"[PERSONA EXEC] {persona_id} | Global Risks: {len(global_mem.get('risks', []))} | Private Risks: {len(agent_mem.get('risks', []))}")
+
+    # Check for interrupt
+    interrupt_result = check_manual_interrupt(state, session)
+    if interrupt_result:
+        return interrupt_result
 
     prompt = PERSONA_PROMPT.format(
         base_prompt=base,
@@ -777,41 +841,69 @@ async def persona_node(state: FocusGroupState):
         strengths=json.dumps(global_mem.get("strengths", [])),
         claims=json.dumps(global_mem.get("claims", [])),
         contradictions=json.dumps(global_mem.get("contradictions", [])),
-        agent_memory=json.dumps(agent_mem),
+        agent_memory=agent_memory_formatted,
         agent_goal=agent_goal,
         tone_instruction=tone_instruction,
+        priority_context=priority_context,
         covered_topics=covered_topics,
-        anti_rep_instruction=anti_rep_instruction,
-        priority_context=priority_context # FIX 7: Inject into format
+        anti_rep_instruction=anti_rep_instruction
     )
 
+
+    # PART 8 — Token streaming via session queue
+    sse_queue = session.get("sse_queue")
+    full_response = ""
+    
     try:
-        response = await llm_provider.generate_response(
-            f"Respond as {agent_config['name']}. You MUST push toward your goal. Do not be reactive — steer.",
-            prompt, state["provider"], stream=False
-        )
+        if sse_queue:
+            # Generate with streaming if a queue is available
+            stream = await llm_provider.generate_response(
+                f"Respond as {agent_config['name']}. You MUST push toward your goal. Do not be reactive — steer.",
+                prompt, state["provider"], stream=True
+            )
+            async for chunk in stream:
+                full_response += chunk
+                await sse_queue.put(sse_event("agent_token", {
+                    "agent_id": persona_id,
+                    "token": chunk
+                }))
+        else:
+            full_response = await llm_provider.generate_response(
+                f"Respond as {agent_config['name']}. You MUST push toward your goal. Do not be reactive — steer.",
+                prompt, state["provider"], stream=False
+            )
     except Exception as e:
         print(f"[PERSONA ERROR] {persona_id}: {e}")
-        response = "That is a complex point. Let me think about its implications."
+        full_response = "That is a complex point. Let me think about its implications."
 
     new_turn = {
         "type": "persona_response",
         "agent_id": persona_id,
         "agent_name": agent_config["name"],
-        "content": response
+        "role": persona_id, # Use persona_id for voice mapping
+        "content": full_response
     }
     
     return {
         "conversation": [new_turn],
         "last_persona_used": persona_id,
-        "agent_memory": agent_memory # Return locally updated memory
+        "agent_memory": { persona_id: agent_memory[persona_id] } # Return ONLY updated slice
     }
 
 async def pitcher_node(state: FocusGroupState):
     """Asks the pitcher a question."""
     session = sessions.get(state["session_id"], {})
     
-    interrupt_result = handle_interrupt_if_present(state, session)
+    # FORCE END CHECK - Immediate termination
+    if session.get("force_end"):
+        print("[FORCE END TRIGGERED] Pitcher terminating")
+        return {
+            "action": "end",
+            "awaiting_user_input": False,
+            "pitcher_interrupt": False
+        }
+    
+    interrupt_result = check_manual_interrupt(state, session)
     if interrupt_result:
         return interrupt_result
     
@@ -821,15 +913,24 @@ async def pitcher_node(state: FocusGroupState):
         
         # FIXED: Safe wait pattern (no race condition) (Fix 4)
         if not event.is_set():
-            # FIXED: Safety timeout fallback (Fix 7)
+            # FIX 6: DEADLOCK PROTECTION (30s)
             try:
-                await asyncio.wait_for(asyncio.shield(event.wait()), timeout=60.0)
+                await asyncio.wait_for(asyncio.shield(event.wait()), timeout=30.0)
             except asyncio.TimeoutError:
-                print("[TIMEOUT] No user response, continuing...")
+                print("[TIMEOUT] No user input → auto continue")
                 return {"awaiting_user_input": False}
         
         # Clear once more
         event.clear()
+
+        # RULE -1: External End signal (Fix: End Button)
+        if session.get("action") == "end_session":
+            session["action"] = None
+            return {
+                "action": "end_session",
+                "awaiting_user_input": False,
+                "pitcher_interrupt": False
+            }
 
         ans = session.get("pending_answer", "")
         session["pending_answer"] = ""
@@ -867,7 +968,16 @@ async def tool_node(state: FocusGroupState):
     """Executes search or fact-check tools."""
     session = sessions.get(state["session_id"], {})
     
-    interrupt_result = handle_interrupt_if_present(state, session)
+    # FORCE END CHECK - Immediate termination
+    if session.get("force_end"):
+        print("[FORCE END TRIGGERED] Tool terminating")
+        return {
+            "action": "end",
+            "awaiting_user_input": False,
+            "pitcher_interrupt": False
+        }
+    
+    interrupt_result = check_manual_interrupt(state, session)
     if interrupt_result:
         return interrupt_result
 
@@ -907,8 +1017,10 @@ async def tool_node(state: FocusGroupState):
         )
         source = "Internal Analysis"
 
+    # FIX 9: Correct ID for memory attribution
     new_turn = {
         "type": "tool_output",
+        "agent_id": f"tool_{tool_type}",
         "agent_name": "Research Tool",
         "content": f"[{tool_type.upper()}] {result_content} (Source: {source})"
     }
@@ -916,6 +1028,23 @@ async def tool_node(state: FocusGroupState):
 
 async def memory_update_node(state: FocusGroupState):
     print("[GRAPH] node=memory_update")
+    session = sessions.get(state["session_id"], {})
+    
+    # FORCE END CHECK - Immediate termination
+    if session.get("force_end"):
+        print("[FORCE END TRIGGERED] Memory update terminating")
+        return {
+            "memory": state.get("memory", {}),
+            "agent_memory": state.get("agent_memory", {}),
+            "action": "end",
+            "awaiting_user_input": False,
+            "pitcher_interrupt": False
+        }
+    
+    interrupt_result = check_manual_interrupt(state, session)
+    if interrupt_result:
+        return interrupt_result
+
     conversation = state.get("conversation", [])
     if not conversation:
         return {
@@ -935,16 +1064,37 @@ async def memory_update_node(state: FocusGroupState):
     try:
         updated_memory, updated_agent_mem = await update_memory(state, last_turn)
         
-        # DEBUG LOGGING
-        print(f"[GLOBAL MEMORY] {state.get('memory')}")
-        print(f"[AGENT MEMORY] {state.get('agent_memory')}")
-        print(f"[STEP] {state.get('step_count')}")
-            
         # FIX: Preserve all agents - do not overwrite entire dict
         existing = state.get("agent_memory", {}).copy()
-        existing.update(updated_agent_mem)
+        for agent_id, data in updated_agent_mem.items():
+            if agent_id not in existing:
+                existing[agent_id] = data
+            else:
+                for key, values in data.items():
+                    if key not in existing[agent_id]:
+                        existing[agent_id][key] = []
+                    existing[agent_id][key].extend(
+                        v for v in values if v not in existing[agent_id][key]
+                    )
 
-        return {"memory": updated_memory, "agent_memory": existing}
+        # FEATURE 2: Track memory history for the evolution timeline
+        history_item = {
+            "step": state.get("step_count", 0),
+            "risks_count": len(updated_memory.get("risks", [])),
+            "strengths_count": len(updated_memory.get("strengths", [])),
+            "contradiction_count": len(updated_memory.get("contradictions", [])),
+            "last_agent": last_turn.get("agent_id")
+        }
+
+        # DEBUG LOGGING
+        print("[GLOBAL MEMORY UPDATED]", updated_memory)
+        print("[AGENT MEMORY UPDATED]", existing)
+
+        return {
+            "memory": updated_memory, 
+            "agent_memory": existing,
+            "memory_history": [history_item]
+        }
     except Exception as e:
         print(f"[MEMORY ERROR]: {e}")
         return {
@@ -953,19 +1103,19 @@ async def memory_update_node(state: FocusGroupState):
         }
 
 async def update_memory(state: FocusGroupState, new_turn: dict) -> Tuple[dict, dict]:
-    base_memory = state.get("memory", {
+    base_memory = copy.deepcopy(state.get("memory", {
         "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [], "covered_topics": []
-    })
-    agent_memory = state.get("agent_memory", {})
-    agent_id = new_turn.get("agent_id")
+    }))
+    # FIX 2: Deep copy agent_memory
+    agent_memory = copy.deepcopy(state.get("agent_memory", {}))
     
-    if not agent_id:
-        # Fallback to pitcher or tool identification
-        agent_id = "pitcher" if new_turn.get("type") == "pitcher_response" else "research_tool"
+    tool_type = new_turn.get("type", "tool")
+    agent_id = new_turn.get("agent_id") or f"tool_{tool_type}"
     
     formatted_prompt = MEMORY_UPDATE_PROMPT.format(
         content=new_turn.get("content", ""),
         agent_name=new_turn.get("agent_name", "Unknown"),
+        agent_id=agent_id,
         memory=json.dumps(base_memory)
     )
     try:
@@ -976,31 +1126,48 @@ async def update_memory(state: FocusGroupState, new_turn: dict) -> Tuple[dict, d
         updated = extract_json(response)
         
         # KEY RECONCILIATION: Fix common LLM naming slips
-        mapping = {"risk": "risks", "strength": "strengths", "claim": "claims", "contradiction": "contradictions", "opinion": "opinions", "topic": "covered_topics", "topics": "covered_topics"}
+        mapping = {
+            "risk": "risks", "strength": "strengths", "claim": "claims", 
+            "contradiction": "contradictions", "opinion": "opinions", 
+            "topic": "covered_topics", "topics": "covered_topics",
+            "concern": "concerns",
+            "agent_concern": "concerns",
+            "agent_opinion": "agent_opinions",
+            "disagreement": "disagreements"
+        }
         for k, v in mapping.items():
             if k in updated and v not in updated:
                 updated[v] = updated[k]
 
         print(f"[MEMORY PARSED] {updated}")
         
+        # FIX 4: MEMORY EMPTY FALLBACK
         if not updated:
-            print("[MEMORY WARNING] Empty extraction from LLM")
-            return base_memory, agent_memory
-
-        # GUARANTEE: Never let the memory update be fully empty if context exists
-        if not any(updated.get(k) for k in ["claims", "risks", "strengths", "opinions"]):
-            # Use agent_id (from outer scope) to attribute the default insight
-            updated["opinions"] = [f"{agent_id or 'Participant'} shared their perspective on this segment"]
+            print("[MEMORY WARNING] Empty extraction from LLM → using snippet")
+            updated = {
+                "opinions": [new_turn.get("content", "")[:80]]
+            }
 
         def apply_update(mem, include_topics=False):
+            # FIX 5: Protect against mutation
+            mem = copy.deepcopy(mem)
+
             # Target all core keys
             for key in ["claims", "risks", "strengths", "contradictions", "opinions"]:
                 new_items = updated.get(key, [])
                 if isinstance(new_items, list):
                     if key not in mem: mem[key] = []
+
                     for item in new_items:
-                        if item and str(item).strip() and item not in mem[key]:
-                            mem[key].append(str(item).strip())
+                        if item and str(item).strip():
+                            item_clean = str(item).strip()
+                            
+                            # FIX 7: Deduplication check
+                            if item_clean not in mem[key]:
+                                mem[key].append(item_clean)
+
+                    # Enforce length limit (last 15 items)
+                    mem[key] = mem[key][-15:]
             
             if include_topics:
                 new_topics = updated.get("covered_topics", [])
@@ -1026,8 +1193,36 @@ async def update_memory(state: FocusGroupState, new_turn: dict) -> Tuple[dict, d
         
         if agent_id:
             if agent_id not in agent_memory:
-                agent_memory[agent_id] = {k: [] for k in ["claims", "risks", "strengths", "contradictions", "opinions"]}
+                agent_memory[agent_id] = {
+                    "stance": "Neutral",
+                    "concerns": [],
+                    "positives": [],
+                    "confidence": 50,
+                    "notes": [],
+                    "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [], "disagreements": []
+                }
+            
             agent_memory[agent_id] = apply_update(agent_memory[agent_id], include_topics=False)
+            
+            # Update specialized Agent Mind fields
+            if "stance" in updated: 
+                agent_memory[agent_id]["stance"] = updated["stance"]
+            if "confidence" in updated:
+                try:
+                    agent_memory[agent_id]["confidence"] = int(updated["confidence"])
+                except:
+                    pass
+            
+            for key in ["concerns", "positives", "disagreements"]:
+                src_key = "agent_disagreements" if key == "disagreements" else key
+                new_items = updated.get(src_key, [])
+                if isinstance(new_items, list):
+                    if key not in agent_memory[agent_id]: agent_memory[agent_id][key] = []
+                    for item in new_items:
+                        item_clean = str(item).strip()
+                        if item_clean and item_clean not in agent_memory[agent_id][key]:
+                            agent_memory[agent_id][key].append(item_clean)
+                    agent_memory[agent_id][key] = agent_memory[agent_id][key][-10:]
             
         return updated_base, agent_memory
     except Exception as e:
@@ -1036,7 +1231,17 @@ async def update_memory(state: FocusGroupState, new_turn: dict) -> Tuple[dict, d
 
 async def reflection_node(state: FocusGroupState):
     session = sessions.get(state["session_id"], {})
-    interrupt_result = handle_interrupt_if_present(state, session)
+    
+    # FORCE END CHECK - Immediate termination
+    if session.get("force_end"):
+        print("[FORCE END TRIGGERED] Reflection terminating")
+        return {
+            "action": "end",
+            "awaiting_user_input": False,
+            "pitcher_interrupt": False
+        }
+    
+    interrupt_result = check_manual_interrupt(state, session)
     if interrupt_result:
         return interrupt_result
 
@@ -1057,22 +1262,171 @@ async def reflection_node(state: FocusGroupState):
         return {"last_reflection_step": state.get("step_count", 0)}
 
 async def final_node(state: FocusGroupState):
+    """Generate comprehensive final report with scores, charts, and structured analysis."""
     mode = state.get("mode", "venture")
     context = build_conversation_context({"conversation": state.get("conversation", [])})
-    user_input = json.dumps({
-        "conversation": context,
-        "memory": state.get("memory", {}),
-        "reflection": state.get("reflection", {})
-    })
-    try:
-        formatted_sys = FINAL_ANALYST_PROMPT.format(mode=mode)
-        response = await llm_provider.generate_response(formatted_sys, user_input, state["provider"], stream=False)
-    except Exception as e:
-        response = f"Evaluation error: {str(e)}"
+    memory = state.get("memory", {})
+
+    # Extract data from memory
+    strengths = memory.get("strengths", [])
+    risks = memory.get("risks", [])
+    claims = memory.get("claims", [])
+    contradictions = memory.get("contradictions", [])
+    missing_points = memory.get("missing", [])
+
+    # PART 2 — ADD SCORING SYSTEM (Normalize to 1-10)
+    # Using min/max to cap scores gracefully
+    strength_pts = min(10, len(strengths))
+    risk_pts = min(10, len(risks))
+    clarity_pts = min(10, len(claims))
+    consistency_pts = min(10, len(contradictions))
+
+    # Weighted Formula (out of 100)
+    # Calculation: (S*4 + C*3 + (10-R)*2 + (10-Con)*1) * 10 / 10 = max 100
+    confidence_score = int(
+        (strength_pts * 0.4 + clarity_pts * 0.3 + (10 - risk_pts) * 0.2 + (10 - consistency_pts) * 0.1) * 10
+    )
+    confidence_score = max(0, min(100, confidence_score))
+
+    # PART 7 — ADD "INVESTMENT SIGNAL"
+    if confidence_score >= 75:
+        investment_signal = "STRONG"
+    elif confidence_score >= 50:
+        investment_signal = "MEDIUM"
+    else:
+        investment_signal = "WEAK"
+
+    # PART 3 — VERDICT GENERATION
+    verdict = await generate_verdict_text(
+        strengths, risks, claims, contradictions, confidence_score, mode, state["provider"]
+    )
+
+    # PART 4 — ADD VISUAL CHARTS (BACKEND)
+    charts = await generate_report_charts(strength_pts, risk_pts, clarity_pts, confidence_score)
+
+    # PART 1 — CREATE FINAL REPORT STRUCTURE
+    report = {
+        "pitch_summary": state.get("pitch_summary", ""),
+        "strengths": strengths,
+        "risks": risks,
+        "claims": claims,
+        "contradictions": contradictions,
+        "missing_points": missing_points,
+        "verdict": verdict,
+        "confidence_score": confidence_score,
+        "investment_signal": investment_signal,
+        "charts": charts,
+        "scores": {
+            "strength": strength_pts,
+            "risk": risk_pts,
+            "clarity": clarity_pts,
+            "consistency": consistency_pts
+        }
+    }
+
+    # PART 8 — OPTIONAL: BLACK SWAN
     session = sessions.get(state["session_id"])
     if session:
-        session["verdict"] = response
-    return {"action": "end_session"}
+        black_swan = session.get("black_swan_insight", "")
+        if black_swan:
+            report["black_swan_insight"] = black_swan
+        
+        session["final_report"] = report
+        session["verdict"] = verdict
+
+    return {"action": "end_session", "final_report": report}
+
+async def generate_verdict_text(strengths, risks, claims, contradictions, confidence_score, mode, provider):
+    """Generate structured verdict text based on analysis."""
+    # PART 3 — VERDICT GENERATION RULES
+    prompt = f"""Generate a professional, decisive verdict for this startup pitch evaluation.
+
+ANALYSIS DATA:
+- Strengths: {len(strengths)}
+- Risks: {len(risks)}
+- Claims: {len(claims)}
+- Contradictions: {len(contradictions)}
+- Confidence Score: {confidence_score}/100
+
+MODE: {mode}
+
+Write a verdict that is:
+- Be short (2-3 sentences max)
+- Be decisive and professional
+- Refer specifically to potential vs risks
+
+Example: "This idea shows strong potential but suffers from unclear monetization and scalability risks. Further validation is required before investment."
+
+OUTPUT (Plain text):"""
+
+    try:
+        verdict = await llm_provider.generate_response(
+            "You are a professional startup judge.", prompt, provider, stream=False
+        )
+        return verdict.strip()
+    except Exception:
+        return "Evaluation completed. Review the detailed analysis above for comprehensive insights."
+
+async def generate_report_charts(strength_score, risk_score, clarity_score, confidence_score):
+    """Generate bar chart and pie chart for the report."""
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import io
+        import base64
+
+        charts = {}
+
+        # Bar Chart: Strength, Risk, Clarity, Confidence
+        fig, ax = plt.subplots(figsize=(8, 5))
+        categories = ['Strength', 'Risk', 'Clarity', 'Confidence']
+        values = [strength_score, risk_score, clarity_score, confidence_score]
+        colors = ['green', 'red', 'blue', 'orange']
+
+        bars = ax.bar(categories, values, color=colors, alpha=0.7)
+        ax.set_ylim(0, 10)
+        ax.set_ylabel('Score (1-10)')
+        ax.set_title('Pitch Evaluation Scores')
+        ax.grid(axis='y', alpha=0.3)
+
+        # Add value labels on bars
+        for bar, value in zip(bars, values):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                   f'{value}', ha='center', va='bottom', fontweight='bold')
+
+        # Save bar chart
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        charts['bar_chart'] = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close(fig)
+
+        # Pie Chart: Strength vs Risk
+        fig, ax = plt.subplots(figsize=(6, 6))
+        sizes = [strength_score, risk_score]
+        labels = ['Strength', 'Risk']
+        colors = ['#4CAF50', '#F44336']
+
+        # Only show if both scores > 0
+        if sum(sizes) > 0:
+            ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+            ax.set_title('Strength vs Risk Balance')
+            ax.axis('equal')
+
+            # Save pie chart
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            buf.seek(0)
+            charts['pie_chart'] = base64.b64encode(buf.read()).decode('utf-8')
+            plt.close(fig)
+        else:
+            charts['pie_chart'] = None
+
+        return charts
+
+    except Exception as e:
+        print(f"Chart generation error: {e}")
+        return {"bar_chart": None, "pie_chart": None}
 
 async def stream_echochamber(session_id: str, session: dict, provider: str, mode: str = "venture") -> AsyncGenerator[dict, None]:
     if not session.get("domain") or not session["domain"].get("panel_mode"):
@@ -1096,11 +1450,11 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
             domain_data = {"sub_domain": "General Tech", "panel_mode": "standard"}
 
         if mode == "spark":
-            active_panel = ["enthusiastic", "beginner", "design_critic", "vc", "expert"]
+            active_panel = ["enthusiastic", "beginner", "vc", "expert"]
         elif mode == "reality":
-            active_panel = ["hostile", "suresh", "expert", "competitor", "vc"]
+            active_panel = ["hostile", "expert", "vc", "beginner"]
         else: # venture or default
-            active_panel = ["vc", "competitor", "expert", "enthusiastic", "hostile"]
+            active_panel = ["vc", "expert", "enthusiastic", "hostile"]
 
         domain_data["active_panel"] = active_panel
         session["domain"] = domain_data
@@ -1140,7 +1494,10 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
         "awaiting_pitch_confirmation": False,
         "memory": { "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [], "covered_topics": [] },
         "agent_memory": {
-            agent_id: { "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [] }
+            agent_id: {
+                "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [],
+                "concerns": [], "agent_opinions": [], "disagreements": []
+            }
             for agent_id in _panel_from_session
         },
         "reflection": { "missing": [], "confidence": 0.0, "should_continue": True },
@@ -1155,6 +1512,9 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
     _SENTINEL = object()
     queue: asyncio.Queue = asyncio.Queue()
     yielded_start = False
+
+    # FIXED: Attach queue to session for intra-node streaming (tokens)
+    session["sse_queue"] = queue
 
     async def run_graph():
         nonlocal yielded_start
@@ -1197,21 +1557,48 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
                     "pitcher_interrupt",
                     "pitcher_message",
                     "pending_answer",
-                    "agent_memory" # FIX 5: Sync agent_memory
+                    "agent_memory",
+                    "memory_history"
                 ]:
                     if key in update:
-                        session[key] = update[key]
-                        if key in ["memory", "agent_memory"]:
-                            # FIX 5: Prevent SSE memory spam - only emit if data actually changed
-                            if session.get(key) != update[key]:
-                                session[key] = update[key]
-                                m_obj = session.get("memory", {})
-                                print(f"[SSE MEMORY EMIT] Risks: {len(m_obj.get('risks', []))}")
-                                
+                        if key == "memory_history":
+                            if key not in session: session[key] = []
+                            session[key].extend(update[key])
+                        elif key in ["memory", "agent_memory"]:
+                            # FIX 1: Prevent SSE memory spam - only emit if data actually changed
+                            import json
+                            curr_val = json.dumps(session.get(key, {}), sort_keys=True)
+                            new_val  = json.dumps(update[key], sort_keys=True)
+                            
+                            if curr_val != new_val:
+                                if key == "agent_memory":
+                                    # FIX 1: Safe nested merge for agency state preservation
+                                    existing = session.get("agent_memory", {})
+                                    for aid, data in update["agent_memory"].items():
+                                        if aid not in existing:
+                                            existing[aid] = data
+                                        else:
+                                            # Update structured fields instead of just appending
+                                            if isinstance(data, dict):
+                                                for k, v in data.items():
+                                                    if isinstance(v, list):
+                                                        if k not in existing[aid]: existing[aid][k] = []
+                                                        for item in v:
+                                                            if item not in existing[aid][k]:
+                                                                existing[aid][k].append(item)
+                                                    else:
+                                                        existing[aid][k] = v
+                                    session["agent_memory"] = existing
+                                else:
+                                    session[key] = update[key]
+                                    
                                 await queue.put(sse_event("memory_update", {
                                     "memory": session.get("memory", {}),
-                                    "agent_memory": session.get("agent_memory", {})
+                                    "agent_memory": session.get("agent_memory", {}),
+                                    "memory_history": session.get("memory_history", [])
                                 }))
+                        else:
+                            session[key] = update[key]
 
                 if "conversation" in update:
                     for turn in update["conversation"]:
@@ -1248,6 +1635,7 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
             if item is _SENTINEL: break
             yield item
     finally:
+        session["sse_queue"] = None # Clean up
         graph_task.cancel()
 
     async for event in stream_meta_analysis(session_id, session, provider):

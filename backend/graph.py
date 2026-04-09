@@ -33,6 +33,7 @@ class FocusGroupState(TypedDict):
     memory: dict  # { "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [], "covered_topics": [] }
     agent_memory: dict # { agent_id: { "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [] } }
     reflection: dict  # { "missing": [], "confidence": float, "should_continue": bool, "next_priority": str }
+    memory_history: Annotated[List[dict], operator.add]
     
     # Conversation history
     conversation: Annotated[List[dict], operator.add]
@@ -84,7 +85,8 @@ def build_agentic_graph(
             "ask_pitcher": "pitcher",
             "use_tool": "tool",
             "reflect": "reflection",
-            "end_session": "final"
+            "end_session": "final",
+            "end": "final"
         }
     )
     
@@ -109,13 +111,17 @@ def action_router(state):
     if state.get("pitcher_interrupt"):
         return "controller"
 
-    if state.get("step_count", 0) >= state.get("max_steps", 20):
-        return "end_session"
+    if state.get("step_count", 0) >= state.get("max_steps", 20) or state.get("action") == "end":
+        return "end"
 
     action = state.get("action")
     if not action:
-        # FIXED: Raise error instead of falling back to reflect
-        raise ValueError("Controller returned no action")
+        print("[ROUTER WARNING] Missing action → safe fallback")
+        # Ensure we have a valid target for the fallback action
+        state["action_input"] = {
+            "target": state.get("domain", {}).get("active_panel", ["vc"])[0]
+        }
+        return "ask_persona"
 
     # FIXED: Dynamic reflection interval based on mode
     mode = state.get("mode")

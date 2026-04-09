@@ -81,6 +81,7 @@ class EvaluationRequest(BaseModel):
 class ConversationAnswer(BaseModel):
     session_id: str
     message: str
+    interrupt: bool = False
     provider: str = "groq"
 
 class SummaryApproval(BaseModel):
@@ -147,36 +148,35 @@ async def post_message(req: ConversationAnswer):
     if "events" not in session:
         session["events"] = {
             "answer_event": asyncio.Event(),
+            "interrupt_event": asyncio.Event(),
             "summary_approved": asyncio.Event()
         }
 
     session["pending_answer"] = message
 
-    # ✅ NORMAL ANSWER FLOW
-    if session.get("awaiting_user_input"):
+    # ✅ FLOW 1: SYSTEM QUESTION → USER ANSWER
+    if req.interrupt is False and session.get("awaiting_user_input"):
+        session["pending_answer"] = message
         session["awaiting_user_input"] = False
-        session["input_type"] = "pitcher_response" # FIXED: Standardized type
+        
+        print(f"[API] answer_event triggered: {message[:50]}...")
+        if "events" in session and "answer_event" in session["events"]:
+            session["events"]["answer_event"].set()
+        
+        return {"status": "answer_received"}
 
-        print(f"[API] answer received: {message}")
+    # ✅ FLOW 2: MANUAL INTERRUPTION (JUMP IN)
+    if req.interrupt is True:
+        session["interrupt_message"] = message
+        
+        print(f"[API] interrupt_event triggered: {message[:50]}...")
+        if "events" in session and "interrupt_event" in session["events"]:
+            session["events"]["interrupt_event"].set()
+            
+        return {"status": "interrupt_received"}
 
-        # FIXED: Always trigger event (no conditional check) to avoid race condition/deadlock (Fix 1)
-        event = session["events"]["answer_event"]
-        event.set()
-
-        return {"status": "pitcher_response_received"}
-
-    # ✅ INTERRUPT FLOW
-    session["pitcher_interrupt"] = True
-    session["pitcher_message"] = message
-    session["input_type"] = "interrupt"
-
-    # FIXED: Wake graph on interrupt
-    if "events" in session and "answer_event" in session["events"]:
-        session["events"]["answer_event"].set()
-
-    print(f"[API] interrupt: {message}")
-
-    return {"status": "interrupt_triggered"}
+    print(f"[API] Unexpected message format or state. Awaiting: {session.get('awaiting_user_input')}, Interrupt: {req.interrupt}")
+    return {"status": "ignored"}
 
 @app.get("/api/agents")
 async def get_agents():
@@ -250,11 +250,11 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
             "hitl_data": {},
             "events": {
                 "answer_event": asyncio.Event(),
+                "interrupt_event": asyncio.Event(),
                 "summary_approved": asyncio.Event()
             },
             "pending_answer": "",
-            "pitcher_interrupt": False,
-            "pitcher_message": "",
+            "interrupt_message": "",
             "input_type": "confirmation", # FIXED: Standardized (Fix 5)
             "conversation": [],
             "mode": mode,
@@ -294,8 +294,13 @@ async def end_conversation(req: EndConversationRequest):
     if not session:
         raise HTTPException(404, "Session not found")
     
-    # In agentic v4, we signal the controller to end the session
+    # Force immediate termination
+    session["force_end"] = True
     session["action"] = "end_session"
+    
+    # Trigger interrupt to stop current execution
+    if "events" in session and "interrupt_event" in session["events"]:
+        session["events"]["interrupt_event"].set()
     
     if "events" in session and "answer_event" in session["events"]:
         session["events"]["answer_event"].set()
@@ -406,16 +411,17 @@ from pdf_export import generate_pdf_report
 from fastapi import Response
 
 @app.get("/api/session/{session_id}/report")
-async def download_report(session_id: str):
+async def get_report_data(session_id: str):
     session = sessions.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    pdf_bytes = await generate_pdf_report(session)
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=pitch-report.pdf"}
-    )
+
+    # Return the structured report data
+    report_data = session.get("final_report")
+    if not report_data:
+        raise HTTPException(status_code=404, detail="Report not yet generated")
+
+    return report_data
 
 @app.get("/api/memory")
 async def list_memory():
