@@ -201,8 +201,10 @@ export default function ReportPage() {
                   </div>
                 </div>
                 <div className="w-24 h-24 rounded-3xl bg-white border border-slate-100 shadow-xl flex flex-col items-center justify-center">
-                  <span className="text-3xl font-black text-slate-800">{report.confidence_score}</span>
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Points</span>
+                  <span className="text-3xl font-black text-slate-800">
+                    {report.confidence_score}<span className="text-base text-slate-400 font-bold">/100</span>
+                  </span>
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Confidence</span>
                 </div>
               </div>
             </div>

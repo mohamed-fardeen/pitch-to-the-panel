@@ -535,7 +535,11 @@ async def controller_node(state: FocusGroupState):
     if current_step >= max_steps:
         return _ctrl_return("end_session")
 
-    if not reflection.get("should_continue", True) and reflection.get("confidence", 0.0) >= 0.8:
+    # Don't let reflection end the session before enough agents have spoken.
+    # Without this floor, the LLM sometimes declares "high confidence" after
+    # just 2 turns and we surface a meaningless verdict/report.
+    MIN_TURNS_BEFORE_END = 6
+    if current_step >= MIN_TURNS_BEFORE_END and not reflection.get("should_continue", True) and reflection.get("confidence", 0.0) >= 0.8:
         return _ctrl_return("end_session")
 
     missing = reflection.get("missing", [])

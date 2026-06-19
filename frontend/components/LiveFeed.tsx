@@ -48,8 +48,19 @@ export function LiveFeed({
     return agents.find(a => a.name === name || (a as any).id === name);
   };
 
-  // Find the currently speaking agent to show their streaming text
+  // Find the currently speaking agent to show their streaming text.
+  // Match by agent NAME (the only stable identifier on panelState values)
+  // rather than agent_id (which is undefined on these objects).
   const activeAgent = agents.find(a => a.status === "speaking" && a.text);
+
+  // The most recent turn's agent name — used to suppress the streaming
+  // bubble when it's a duplicate of the last conversation turn.
+  const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
+  const lastTurnAgentName = lastTurn?.agent_name?.toLowerCase().trim() || "";
+  const activeAgentName = activeAgent?.name?.toLowerCase().trim() || "";
+  // Show the streaming bubble only if it represents NEW content (i.e. the
+  // last conversation turn is not from the same agent).
+  const showStreamingBubble = !!activeAgent && activeAgentName !== lastTurnAgentName;
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -69,7 +80,7 @@ export function LiveFeed({
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-10 space-y-8 custom-scrollbar scroll-smooth pb-32">
-        {turns.length === 0 && !activeAgent ? (
+        {turns.length === 0 && !showStreamingBubble ? (
           <div className="h-full flex flex-col items-center justify-center space-y-8 opacity-60 text-center">
             <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center border border-emerald-100/50">
                <span className="material-symbols-outlined text-4xl text-emerald-300">history_edu</span>
@@ -84,9 +95,16 @@ export function LiveFeed({
             {turns.map((turn, i) => {
               const agent = getAgentData(turn.agent_name || "");
               const isPitcher = turn.agent_name === "Pitcher" || turn.agent_name === "Alex Chen" || turn.agent_name === "Pitcher (Interrupt)";
-              
-              // Duplication Check: If this turn is already being shown in the Active Streaming Bubble, don't show it here.
-              if (activeAgent && i === turns.length - 1 && turn.agent_id === activeAgent.agent_id && turn.content === activeAgent.text) {
+
+              // If the streaming bubble is going to render for this exact
+              // same agent, skip the conversation bubble to avoid the
+              // duplicate rendering that was visible in earlier sessions.
+              if (
+                i === turns.length - 1 &&
+                showStreamingBubble &&
+                activeAgent &&
+                turn.agent_name?.toLowerCase().trim() === activeAgent.name?.toLowerCase().trim()
+              ) {
                 return null;
               }
 
@@ -116,7 +134,7 @@ export function LiveFeed({
             })}
 
             {/* Active Streaming Bubble */}
-            {activeAgent && (
+            {showStreamingBubble && activeAgent && (
               <div className="flex flex-col gap-2 transition-all duration-300">
                 <div className="flex items-center gap-3 ml-1">
                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" style={{ backgroundColor: activeAgent.color }}></div>
