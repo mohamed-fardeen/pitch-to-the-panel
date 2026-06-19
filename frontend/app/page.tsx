@@ -680,10 +680,9 @@ export default function Home() {
       />
 
       <main className="flex-1 flex flex-col min-w-0 h-full relative">
-        <Header 
-          provider={provider} 
-          setProvider={setProvider} 
-          disabled={stage !== "idle" && stage !== "pitching"} 
+        <Header
+          provider={provider}
+          setProvider={setProvider}
         />
 
         <div className="bg-gradient-to-b from-surface-container-low to-transparent h-px w-full"></div>

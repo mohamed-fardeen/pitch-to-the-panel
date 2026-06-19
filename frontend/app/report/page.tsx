@@ -181,7 +181,7 @@ export default function ReportPage() {
       <Sidebar onNewPitch={() => router.push("/")} currentView="report" onViewChange={() => {}} />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden">
-        <Header provider="anthropic" setProvider={() => {}} disabled={true} />
+        <Header provider="anthropic" setProvider={() => {}} locked={true} />
 
         <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
           <div className="max-w-6xl mx-auto space-y-12 pb-20">

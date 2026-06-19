@@ -6,15 +6,21 @@ import { Provider } from "./ModelSelector";
 interface HeaderProps {
   provider: Provider;
   setProvider: (provider: Provider) => void;
-  disabled: boolean;
+  /**
+   * Optional locked state. If true, the model tabs are read-only (e.g. on
+   * the report page where the chosen model is fixed for the displayed
+   * session). Default: false — tabs are always interactive so the user can
+   * pre-select a model for the NEXT session at any time.
+   */
+  locked?: boolean;
 }
 
-export function Header({ provider, setProvider, disabled }: HeaderProps) {
+export function Header({ provider, setProvider, locked = false }: HeaderProps) {
   return (
     <header className="flex justify-between items-center px-12 py-6 bg-white border-b border-slate-100/60 font-headline">
       <div className="flex items-center gap-12">
         <h2 className="text-2xl font-black text-[#006948] tracking-tight">Pitch to the Panel</h2>
-        <ProviderTabs provider={provider} setProvider={setProvider} disabled={disabled} />
+        <ProviderTabs provider={provider} setProvider={setProvider} locked={locked} />
       </div>
 
       <div className="flex items-center gap-8">
@@ -45,7 +51,7 @@ const PROVIDER_TABS: { id: Provider; label: string }[] = [
   { id: "ollama", label: "OLLAMA" },
 ];
 
-function ProviderTabs({ provider, setProvider, disabled }: { provider: Provider; setProvider: (p: Provider) => void; disabled: boolean }) {
+function ProviderTabs({ provider, setProvider, locked }: { provider: Provider; setProvider: (p: Provider) => void; locked: boolean }) {
   return (
     <nav className="hidden md:flex gap-10">
       {PROVIDER_TABS.map((tab) => {
@@ -53,13 +59,14 @@ function ProviderTabs({ provider, setProvider, disabled }: { provider: Provider;
         return (
           <button
             key={tab.id}
-            disabled={disabled}
-            onClick={() => setProvider(tab.id)}
+            disabled={locked}
+            aria-disabled={locked}
+            onClick={() => { if (!locked) setProvider(tab.id); }}
             className={`transition-all duration-300 text-[11px] font-bold uppercase tracking-[0.2em] relative py-1 ${
               isActive
                 ? "text-[#006948]"
                 : "text-slate-300 hover:text-slate-500"
-            } disabled:opacity-50`}
+            } ${locked ? "opacity-40 cursor-not-allowed" : ""}`}
           >
             {tab.label}
             {isActive && (

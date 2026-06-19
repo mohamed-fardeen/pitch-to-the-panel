@@ -6,6 +6,7 @@ import { GraphView } from "../../components/graph/GraphView";
 import { useDebugStream } from "../../components/analytics/useDebugStream";
 import { Sidebar } from "../../components/Sidebar";
 import { Header } from "../../components/Header";
+import { Provider } from "../../components/ModelSelector";
 
 const API_BASE = "http://localhost:8000/api";
 
@@ -13,6 +14,8 @@ function GraphPageContent() {
   const searchParams = useSearchParams();
   const sessionIdParam = searchParams.get("session_id");
   const [sessionId, setSessionId] = useState<string | null>(sessionIdParam);
+  // Model is read-only here (no setup flow). Provider is cosmetic only.
+  const [provider] = useState<Provider>("anthropic");
   const debugStream = useDebugStream();
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -71,7 +74,7 @@ function GraphPageContent() {
       />
 
       <main className="flex-1 flex flex-col min-w-0 h-full relative">
-        <Header />
+        <Header provider={provider} setProvider={() => {}} locked={true} />
         
         {!sessionId ? (
           <div className="flex-1 flex flex-col items-center justify-center p-20 text-center space-y-8 bg-slate-50">
