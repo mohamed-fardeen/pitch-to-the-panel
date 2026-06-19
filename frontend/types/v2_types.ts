@@ -25,6 +25,7 @@ export interface PanelState {
     role: AgentRole;
     name: string;
     avatarUrl?: string;
+    thinkingSignals?: string[];
   };
 }
 
