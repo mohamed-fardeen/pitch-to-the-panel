@@ -1,5 +1,4 @@
 import json
-import re
 
 # --- V5 MODE-DRIVEN PROMPT SYSTEM ---
 
@@ -97,7 +96,7 @@ Memory: {memory}
 Reflection: {reflection}
 Step Count: {step_count}
 Action History: {action_history}
-Last Persona: {last_persona_used}
+Recent Speakers: {recent_speakers}
 Input Type: {input_type}
 
 MODE-SPECIFIC GOAL:
@@ -275,12 +274,18 @@ Output a sharp, 2-3 sentence insight that uncovers a hidden dependency, a counte
 """
 
 def extract_json(text: str) -> dict:
-    """Safe JSON extraction using regex."""
-    try:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            return json.loads(match.group())
-        raise ValueError("No valid JSON found")
-    except Exception as e:
-        print(f"[JSON EXTRACTION ERROR] {e}")
+    """Robust JSON extraction: finds the first balanced {...} block."""
+    if not text:
         return {}
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start != -1:
+        try:
+            obj, _ = decoder.raw_decode(text[start:])
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        start = text.find("{", start + 1)
+    print(f"[JSON EXTRACTION ERROR] No valid JSON object found in text")
+    return {}

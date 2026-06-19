@@ -13,6 +13,11 @@ load_dotenv()
 
 class LLMProvider:
     def __init__(self):
+        # Pooled HTTP client for Ollama (and any other HTTP-based provider)
+        self._http_client = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            timeout=httpx.Timeout(60.0, connect=10.0),
+        )
         self.anthropic_client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY")) if os.getenv("ANTHROPIC_API_KEY") else None
         
         gemini_api_key = os.getenv("GEMINI_API_KEY")
@@ -142,7 +147,9 @@ class LLMProvider:
         )
         async for event in stream:
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                yield event.delta.text
+                text = event.delta.text
+                if text:
+                    yield text
 
     async def _stream_gemini(self, system_prompt: str, user_prompt: str, max_tokens: int = 1024) -> AsyncGenerator[str, None]:
         stream = await self.gemini_client.aio.models.generate_content(
@@ -155,7 +162,9 @@ class LLMProvider:
             stream=True
         )
         async for chunk in stream:
-            yield chunk.text
+            text = getattr(chunk, "text", None)
+            if text:
+                yield text
 
     async def _stream_openai(self, system_prompt: str, user_prompt: str, max_tokens: int = 1024) -> AsyncGenerator[str, None]:
         stream = await self.openai_client.chat.completions.create(
@@ -168,8 +177,9 @@ class LLMProvider:
             max_tokens=max_tokens
         )
         async for chunk in stream:
-            if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
+            content = chunk.choices[0].delta.content
+            if content is not None:
+                yield content
 
     async def _stream_groq(self, system_prompt: str, user_prompt: str, max_tokens: int = 1024) -> AsyncGenerator[str, None]:
         stream = await self.groq_client.chat.completions.create(
@@ -182,8 +192,9 @@ class LLMProvider:
             max_tokens=max_tokens
         )
         async for chunk in stream:
-            if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
+            content = chunk.choices[0].delta.content
+            if content is not None:
+                yield content
 
     async def _sync_ollama(self, system_prompt: str, user_prompt: str) -> str:
         payload = {
@@ -194,15 +205,14 @@ class LLMProvider:
             ],
             "stream": False
         }
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post("http://localhost:11434/api/chat", json=payload, timeout=60.0)
-                if response.status_code == 200:
-                    return response.json().get("message", {}).get("content", "")
-                raise Exception(f"Ollama API returned non-200 status: {response.status_code}")
-            except Exception as e:
-                print(f"[OLLAMA SYNC] Error: {str(e)}")
-                raise e
+        try:
+            response = await self._http_client.post("http://localhost:11434/api/chat", json=payload, timeout=60.0)
+            if response.status_code == 200:
+                return response.json().get("message", {}).get("content", "")
+            raise Exception(f"Ollama API returned non-200 status: {response.status_code}")
+        except Exception as e:
+            print(f"[OLLAMA SYNC] Error: {str(e)}")
+            raise e
 
     async def _stream_ollama(self, system_prompt: str, user_prompt: str) -> AsyncGenerator[str, None]:
         payload = {
@@ -213,19 +223,23 @@ class LLMProvider:
             ],
             "stream": True
         }
-        async with httpx.AsyncClient() as client:
-            try:
-                async with client.stream("POST", "http://localhost:11434/api/chat", json=payload, timeout=60.0) as response:
-                    async for line in response.aiter_lines():
-                        if line:
-                            try:
-                                data = json.loads(line)
-                                if "message" in data and "content" in data["message"]:
-                                    yield data["message"]["content"]
-                            except json.JSONDecodeError:
-                                continue
-            except Exception as e:
-                print(f"[OLLAMA STREAM] Error: {str(e)}")
-                raise e
+        try:
+            async with self._http_client.stream("POST", "http://localhost:11434/api/chat", json=payload, timeout=60.0) as response:
+                async for line in response.aiter_lines():
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            if "message" in data and "content" in data["message"]:
+                                yield data["message"]["content"]
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            print(f"[OLLAMA STREAM] Error: {str(e)}")
+            raise e
+
+    async def close(self) -> None:
+        """Close the pooled HTTP client. Call on app shutdown."""
+        await self._http_client.aclose()
+
 
 llm_provider = LLMProvider()

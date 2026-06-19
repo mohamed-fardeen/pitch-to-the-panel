@@ -10,41 +10,11 @@ interface HeaderProps {
 }
 
 export function Header({ provider, setProvider, disabled }: HeaderProps) {
-  const models = [
-    { label: "CLAUDE", id: "anthropic" },
-    { label: "GEMINI", id: "gemini" },
-    { label: "GPT", id: "openai" },
-    { label: "GROQ", id: "groq" },
-    { label: "OLLAMA", id: "ollama" }
-  ];
-
   return (
     <header className="flex justify-between items-center px-12 py-6 bg-white border-b border-slate-100/60 font-headline">
       <div className="flex items-center gap-12">
         <h2 className="text-2xl font-black text-[#006948] tracking-tight">Pitch to the Panel</h2>
-        
-        <nav className="hidden md:flex gap-10">
-          {models.map((model) => {
-            const isActive = provider === model.id;
-            return (
-              <button
-                key={model.id}
-                disabled={disabled}
-                onClick={() => setProvider(model.id as Provider)}
-                className={`transition-all duration-300 text-[11px] font-bold uppercase tracking-[0.2em] relative py-1 ${
-                  isActive
-                    ? "text-[#006948]"
-                    : "text-slate-300 hover:text-slate-500"
-                } disabled:opacity-50`}
-              >
-                {model.label}
-                {isActive && (
-                  <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-[#006948] rounded-full duration-500" />
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        <ProviderTabs provider={provider} setProvider={setProvider} disabled={disabled} />
       </div>
 
       <div className="flex items-center gap-8">
@@ -61,5 +31,43 @@ export function Header({ provider, setProvider, disabled }: HeaderProps) {
         </div>
       </div>
     </header>
+  );
+}
+
+// Inline provider tabs styled to match the header aesthetic. Kept here
+// because the default ModelSelector uses an Outline/M3 surface palette that
+// clashes with the page-level design tokens used in Header.
+const PROVIDER_TABS: { id: Provider; label: string }[] = [
+  { id: "anthropic", label: "CLAUDE" },
+  { id: "gemini", label: "GEMINI" },
+  { id: "openai", label: "GPT" },
+  { id: "groq", label: "GROQ" },
+  { id: "ollama", label: "OLLAMA" },
+];
+
+function ProviderTabs({ provider, setProvider, disabled }: { provider: Provider; setProvider: (p: Provider) => void; disabled: boolean }) {
+  return (
+    <nav className="hidden md:flex gap-10">
+      {PROVIDER_TABS.map((tab) => {
+        const isActive = provider === tab.id;
+        return (
+          <button
+            key={tab.id}
+            disabled={disabled}
+            onClick={() => setProvider(tab.id)}
+            className={`transition-all duration-300 text-[11px] font-bold uppercase tracking-[0.2em] relative py-1 ${
+              isActive
+                ? "text-[#006948]"
+                : "text-slate-300 hover:text-slate-500"
+            } disabled:opacity-50`}
+          >
+            {tab.label}
+            {isActive && (
+              <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-[#006948] rounded-full duration-500" />
+            )}
+          </button>
+        );
+      })}
+    </nav>
   );
 }

@@ -20,9 +20,9 @@ export function VerdictCard({ verdict, sessionId, onClose }: VerdictCardProps) {
 
   const handleDownloadReport = async () => {
     try {
-      const response = await fetch(`${API_BASE}/session/${sessionId}/report`);
+      const response = await fetch(`${API_BASE}/session/${sessionId}/report/pdf`);
       if (!response.ok) throw new Error("Report not ready");
-      
+
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -31,7 +31,9 @@ export function VerdictCard({ verdict, sessionId, onClose }: VerdictCardProps) {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
+      // Defer revocation: some browsers cancel the download if the object URL
+      // is revoked synchronously after click().
+      setTimeout(() => window.URL.revokeObjectURL(url), 2000);
     } catch (err) {
       console.error("Download failed:", err);
     }

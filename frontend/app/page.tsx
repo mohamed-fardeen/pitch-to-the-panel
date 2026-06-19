@@ -40,6 +40,7 @@ export default function Home() {
   const [domainData, setDomainData] = useState<any>(null);
   const [hitlData, setHitlData] = useState<any>(null);
   const [difficulty, setDifficulty] = useState("venture");
+  const [aggressiveness, setAggressiveness] = useState<number>(5);
   const [radarChart, setRadarChart] = useState<string | null>(null);
   
   const [manualText, setManualText] = useState("");
@@ -74,8 +75,15 @@ export default function Home() {
   const [globalMemory, setGlobalMemory] = useState<any>({});
 
   const [currentlySpeaking, setCurrentlySpeaking] = useState<string | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const turnQueueRef = useRef<any[]>([]);
   const isProcessingQueueRef = useRef(false);
+
+  const speakAsync = (role: AgentRole, text: string): Promise<void> => {
+    return new Promise((resolve) => {
+      speak(role, text, resolve);
+    });
+  };
 
   const processNextTurn = async () => {
     if (isProcessingQueueRef.current || turnQueueRef.current.length === 0) return;
@@ -99,17 +107,28 @@ export default function Home() {
       content: turn.content
     }]);
 
-    // 3. Start TTS
-    speak(turn.role as AgentRole, turn.content, () => {
-      // 4. Clean up after speaking
-      setTimeout(() => {
-        // Clear agent text so bubble resets
-        updateAgentState(turn.agent_id, "", "idle", true);
-        setCurrentlySpeaking(null);
-        isProcessingQueueRef.current = false;
-        processNextTurn(); // Loop
-      }, 100); // Reduced delay for snappier feel
-    });
+    // 3. Start TTS - await sequentially
+    await speakAsync(turn.role as AgentRole, turn.content);
+
+    // Notify backend that speech is complete to unlock the controller
+    try {
+      await fetch(`${API_BASE}/conversation/speech_complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId })
+      });
+    } catch (err) {
+      console.error("Failed to notify speech complete:", err);
+    }
+
+    // 4. Clean up after speaking
+    setTimeout(() => {
+      // Clear agent text so bubble resets
+      updateAgentState(turn.agent_id, "", "idle", true);
+      setCurrentlySpeaking(null);
+      isProcessingQueueRef.current = false;
+      processNextTurn(); // Loop
+    }, 100);
   };
 
   const enqueueTurn = (data: any) => {
@@ -198,6 +217,14 @@ export default function Home() {
       console.log("Initial Session ID generated:", newSessionId);
     }
     
+    // Phase 4: Load revised pitch if user clicked "Re-Pitch to Panel" from report page
+    const rePitch = localStorage.getItem("pttp_repitch");
+    if (rePitch) {
+      localStorage.removeItem("pttp_repitch");
+      setManualText(rePitch);
+      setStage("pitching");
+    }
+    
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
@@ -249,7 +276,8 @@ export default function Home() {
     url.searchParams.append("session_id", sessionId);
     url.searchParams.append("pitch", currentPitch);
     url.searchParams.append("provider", provider);
-    url.searchParams.append("mode", difficulty); // FIXED: Backend v5 expects 'mode' (Fix 3)
+    url.searchParams.append("mode", difficulty);
+    url.searchParams.append("aggressiveness", aggressiveness.toString());
     if (pitcherId) url.searchParams.append("pitcher_id", pitcherId);
 
     if (eventSourceRef.current) {
@@ -295,6 +323,20 @@ export default function Home() {
       setPanelState(initialState);
     });
 
+    eventSource.addEventListener("agent_thinking", (e: any) => {
+      const data = JSON.parse(e.data);
+      setPanelState((prev: PanelState) => {
+        const newState = { ...prev };
+        const existing = newState[data.agent_id] || { text: "", status: "idle", role: "critic", name: data.name };
+        newState[data.agent_id] = {
+          ...existing,
+          thinkingSignals: data.signals,
+          status: "thinking"
+        };
+        return newState;
+      });
+    });
+
     eventSource.addEventListener("agent_start", (e: any) => {
         const data = JSON.parse(e.data);
         setActiveAgent({ id: data.agent_id, name: data.name });
@@ -303,6 +345,25 @@ export default function Home() {
     eventSource.addEventListener("agent_token", (e: any) => {
       const data = JSON.parse(e.data);
       updateAgentState(data.agent_id, data.token, "streaming");
+    });
+
+    eventSource.addEventListener("speech_start", (e: any) => {
+      const data = JSON.parse(e.data);
+      console.log("Speech started:", data.agent_id);
+      setIsSpeaking(true);
+      // Optional: highlight graph here if needed
+    });
+
+    eventSource.addEventListener("speech_stop", (e: any) => {
+      console.log("Speech STOPPED (interrupt)");
+      stopSpeaking();
+      turnQueueRef.current = []; // Clear pending turns
+      setIsSpeaking(false);
+    });
+
+    eventSource.addEventListener("speech_end", (e: any) => {
+      console.log("Speech ends (resuming backend)");
+      setIsSpeaking(false);
     });
 
     eventSource.addEventListener("agent_turn", (e: any) => {
@@ -331,9 +392,8 @@ export default function Home() {
 
     eventSource.addEventListener("black_swan_report", (e: any) => {
       const data = JSON.parse(e.data);
-      setVerdictData(data);
-      setStage("verdict");
-      setShowVerdictModal(true);
+      // Store the insight for later use in the report — modal opens on verdict_complete
+      setVerdictData((prev: any) => ({ ...prev, black_swan: data.insight }));
     });
 
     eventSource.addEventListener("verdict_complete", (e: any) => {
@@ -341,6 +401,11 @@ export default function Home() {
       setVerdictData(data);
       setStage("verdict");
       setIsStreaming(false);
+      // Stop any speaking agents before navigating
+      cancelAllTurns();
+      stopSpeaking();
+      setIsSpeaking(false);
+      setActiveAgent(null);
 
       // Navigate to report page after a short delay
       setTimeout(() => {
@@ -364,6 +429,15 @@ export default function Home() {
 
     // heartbeat events keep the connection alive — silently ignore them
     eventSource.addEventListener("heartbeat", () => {});
+
+    // past_pitches_found — show toast when history is found
+    eventSource.addEventListener("past_pitches_found", (e: any) => {
+      try {
+        const data = JSON.parse(e.data);
+        addLog(`📚 ${data.message}`);
+        console.log("[Memory] Past pitches found:", data);
+      } catch {}
+    });
 
     // debug_node events feed the analytics execution graph
     eventSource.addEventListener("debug_node", (e: any) => {
@@ -398,10 +472,10 @@ export default function Home() {
     eventSource.addEventListener("conversation_complete", (e: any) => {
       const data = JSON.parse(e.data);
       console.log("Event received: conversation_complete", data);
-      setStage("verdict");
-      setVerdictData(data);
-      setShowVerdictModal(true);
-      setIsStreaming(false);
+      // Panel is done — stop all TTS and clear active agents
+      // The verdict_complete event will handle navigation to the report
+      cancelAllTurns();
+      setIsSpeaking(false);
       setActiveAgent(null);
       debugStream.pushEvent("conversation_complete", data);
       debugStream.setConnected(false);
@@ -447,14 +521,21 @@ export default function Home() {
     setAwaitingUserInput(false);
     
     console.log("[UI] answer submitted:", ans.substring(0, 50));
+    // If we're interrupting while somebody is talking, cancel current speech immediately
+    if (isSpeaking || currentlySpeaking) {
+      stopSpeaking();
+      turnQueueRef.current = [];
+      setIsSpeaking(false);
+    }
+
     try {
-      await fetch(`${API_BASE}/conversation/message`, {
+      const resp = await fetch(`${API_BASE}/conversation/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId,
-          message: ans,
-          interrupt: false
+          message: manualText,
+          interrupt: true // Force interrupt flow
         })
       });
 
@@ -901,6 +982,24 @@ export default function Home() {
                         </div>
 
                         <div className="space-y-4">
+                          <div className="flex items-center justify-between ml-2">
+                            <label className="text-[11px] font-bold text-[#006948] uppercase tracking-[0.2em]">Panel Aggressiveness</label>
+                            <span className="text-[10px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md uppercase">{aggressiveness <= 3 ? "Supportive" : aggressiveness >= 8 ? "Hostile" : "Balanced"} ({aggressiveness}/10)</span>
+                          </div>
+                          <input 
+                            type="range" 
+                            min="1" max="10" 
+                            value={aggressiveness} 
+                            onChange={(e) => setAggressiveness(parseInt(e.target.value))} 
+                            className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#006948]"
+                          />
+                          <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 mt-2">
+                            <span>Friendly</span>
+                            <span>Adversarial</span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
                           <label className="text-[11px] font-bold text-[#006948] uppercase tracking-[0.2em] ml-2">What would you like to pitch?</label>
                           <textarea 
                             value={manualText} 
@@ -947,7 +1046,7 @@ export default function Home() {
                     <div className="flex-[0.7] overflow-y-auto pr-6 custom-scrollbar pb-12">
                       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                          {Object.entries(panelState).map(([id, agent]) => (
-                            <AgentCard key={id} id={id} name={agent.name} role={agent.role} status={agent.status} text={agent.text} avatarUrl={agent.avatarUrl} isChallenged={challengingAgentId === id} />
+                            <AgentCard key={id} id={id} name={agent.name} role={agent.role} status={agent.status} text={agent.text} avatarUrl={agent.avatarUrl} isChallenged={challengingAgentId === id} thinkingSignals={agent.thinkingSignals} />
                          ))}
                       </div>
                     </div>

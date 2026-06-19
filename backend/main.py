@@ -3,13 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 import json
-from orchestrator import sessions
 import asyncio
 
 from orchestrator import (
+    sessions,
     handle_verdict_pushback,
-    get_scoring_radar, 
-    save_pitcher_memory, 
+    get_scoring_radar,
+    save_pitcher_memory,
     generate_3d_from_sketch,
     generate_fact_check,
     generate_rebuttal_response,
@@ -134,6 +134,15 @@ async def approve_summary(req: SummaryApproval):
         session["hitl_data"] = {}
     
     session["hitl_data"]["corrected_summary"] = req.corrected_summary
+    if "events" not in session:
+        import asyncio
+        session["events"] = {
+            "answer_event": asyncio.Event(),
+            "interrupt_event": asyncio.Event(),
+            "summary_approved": asyncio.Event(),
+            "speech_complete_event": asyncio.Event()
+        }
+        
     session["events"]["summary_approved"].set()
     return {"status": "ok"}
 
@@ -215,8 +224,19 @@ async def submit_rebuttal(req: RebuttalRequest):
     )
     return {"agent_response": response}
 
+@app.post("/api/conversation/speech_complete")
+async def speech_complete(request: Request):
+    data = await request.json()
+    session_id = data.get("session_id")
+    session = sessions.get(session_id)
+    if session:
+        session["is_speaking"] = False
+        if "events" in session and "speech_complete_event" in session["events"]:
+            session["events"]["speech_complete_event"].set()
+    return {"status": "ok"}
+
 @app.get("/api/stream/main")
-async def main_stream(request: Request, session_id: str, pitch: str, provider: str = "groq", pitcher_id: str = None, mode: str = "venture"):
+async def main_stream(request: Request, session_id: str, pitch: str, provider: str = "groq", pitcher_id: str = None, mode: str = "venture", aggressiveness: int = 5):
     # FIXED: Enforce valid session_id
     if not session_id or not session_id.strip():
         raise HTTPException(status_code=400, detail="session_id is required")
@@ -251,13 +271,15 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
             "events": {
                 "answer_event": asyncio.Event(),
                 "interrupt_event": asyncio.Event(),
-                "summary_approved": asyncio.Event()
+                "summary_approved": asyncio.Event(),
+                "speech_complete_event": asyncio.Event()
             },
             "pending_answer": "",
             "interrupt_message": "",
             "input_type": "confirmation", # FIXED: Standardized (Fix 5)
             "conversation": [],
             "mode": mode,
+            "aggressiveness": aggressiveness,
             "provider": provider,
             "awaiting_pitch_confirmation": False,
             "awaiting_user_input": False,
@@ -267,7 +289,9 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
     async def event_generator():
         try:
             async for event in stream_echochamber(session_id, sessions[session_id], provider, mode):
-                if await request.is_disconnected():
+                if await request.is_disconnected() or sessions[session_id].get("cancelled"):
+                    if "graph_task" in sessions[session_id]:
+                        sessions[session_id]["graph_task"].cancel()
                     break
                 
                 yield event
@@ -296,6 +320,7 @@ async def end_conversation(req: EndConversationRequest):
     
     # Force immediate termination
     session["force_end"] = True
+    session["cancelled"] = True
     session["action"] = "end_session"
     
     # Trigger interrupt to stop current execution
@@ -422,6 +447,150 @@ async def get_report_data(session_id: str):
         raise HTTPException(status_code=404, detail="Report not yet generated")
 
     return report_data
+
+@app.get("/api/session/{session_id}/report/pdf")
+async def get_report_pdf(session_id: str):
+    session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if "final_report" not in session:
+        raise HTTPException(status_code=404, detail="Report not generated yet. Finish the panel discussion first.")
+
+    try:
+        pdf_bytes = await generate_pdf_report(session)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=pitch-report-{session_id}.pdf"
+            }
+        )
+    except Exception as e:
+        print(f"[PDF ERROR] {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {str(e)}")
+
+# ─── Pitch History Dashboard ──────────────────────────────────────────────────
+
+@app.get("/api/pitch-history")
+async def get_pitch_history(limit: int = 20):
+    """
+    Return all stored pitch sessions from Supabase pgvector for the history dashboard.
+    Falls back to empty list if DB is not configured.
+    """
+    try:
+        from services.db import _get_vecs_client
+        import asyncio
+        collection = await asyncio.to_thread(_get_vecs_client)
+        if collection is None:
+            return {"pitches": [], "total": 0}
+
+        # Fetch all records using a neutral embedding query (fetch by metadata scan)
+        # vecs doesn't have a native list-all, so we query with a zero vector + high limit
+        zero_vec = [0.0] * 1024
+        results = await asyncio.to_thread(
+            collection.query,
+            data=zero_vec,
+            limit=limit,
+            include_metadata=True,
+            include_value=False
+        )
+        pitches = []
+        for doc_id, metadata in [(r[0], r[2]) for r in results]:
+            pitches.append({
+                "id": doc_id,
+                "session_id": metadata.get("session_id", ""),
+                "pitch_summary": metadata.get("pitch_summary", ""),
+                "strongest": metadata.get("strongest", ""),
+                "weakness": metadata.get("weakness", ""),
+                "fix": metadata.get("fix", ""),
+                "confidence_score": metadata.get("confidence_score", 0),
+                "timestamp": metadata.get("timestamp", 0),
+            })
+        # Sort newest first
+        pitches.sort(key=lambda x: x["timestamp"], reverse=True)
+        return {"pitches": pitches, "total": len(pitches)}
+    except Exception as e:
+        print(f"[HISTORY ERROR] {e}")
+        return {"pitches": [], "total": 0, "error": str(e)}
+
+# ─── Phase 4: Pitch Revision Loop ─────────────────────────────────────────────
+
+
+class RevisionRequest(BaseModel):
+    session_id: str
+    provider: str = "groq"
+
+@app.post("/api/revise-pitch")
+async def revise_pitch(req: RevisionRequest):
+    """
+    Given a completed session, generate a revised pitch that directly
+    addresses the panel's criticisms. Returns original + revised pitch side-by-side.
+    """
+    session = sessions.get(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    report = session.get("final_report")
+    if not report:
+        raise HTTPException(status_code=404, detail="No report found. Complete the pitch session first.")
+
+    original_pitch = session.get("pitch_summary", "")
+    verdict_parts = session.get("verdict_parts", {})
+    strengths = report.get("strengths", [])
+    risks = report.get("risks", [])
+    missing_points = report.get("missing_points", [])
+
+    revision_prompt = f"""You are an expert pitch coach and startup strategist.
+
+A founder pitched their startup to a panel of investors and received this feedback:
+
+ORIGINAL PITCH:
+{original_pitch}
+
+PANEL FEEDBACK:
+- Strongest Point: {verdict_parts.get("strongest", "Not identified")}
+- Biggest Weakness: {verdict_parts.get("weakness", "Not identified")}
+- Advised Fix: {verdict_parts.get("fix", "Not specified")}
+- Key Risks Raised: {chr(10).join(f"  • {r}" for r in risks[:5])}
+- Missing Information: {chr(10).join(f"  • {m}" for m in missing_points[:3])}
+
+YOUR TASK:
+Rewrite the pitch to directly address ALL the weaknesses above while preserving the strengths.
+The revised pitch must:
+1. Open with a stronger hook that addresses the core value proposition clearly
+2. Include specific numbers or evidence to back up any claims
+3. Explicitly address the biggest weakness the panel identified
+4. Cover the missing information gaps
+5. Be 2-4 paragraphs, crisp, and investor-ready
+
+OUTPUT: Only the revised pitch text. No preamble, no explanation."""
+
+    try:
+        revised = await llm_provider.generate_response(
+            "You are a world-class pitch coach. Rewrite the pitch to address the panel's criticisms.",
+            revision_prompt,
+            req.provider,
+            stream=False
+        )
+        revised = revised.strip()
+
+        # Store revised pitch in session for re-pitching
+        session["revised_pitch"] = revised
+
+        return {
+            "original_pitch": original_pitch,
+            "revised_pitch": revised,
+            "verdict_parts": verdict_parts,
+            "improvements_addressed": [
+                verdict_parts.get("weakness", ""),
+                verdict_parts.get("fix", ""),
+            ] + missing_points[:2]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Revision failed: {str(e)}")
+
+
 
 @app.get("/api/memory")
 async def list_memory():

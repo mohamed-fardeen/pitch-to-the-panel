@@ -24,6 +24,7 @@ class FocusGroupState(TypedDict):
     awaiting_user_input: bool
     pitcher_interrupt: bool
     pitcher_message: str
+    is_speaking: bool  # Speech synchronization lock
     
     # Pitch Refinement
     refined_pitch: str
@@ -46,7 +47,8 @@ def build_agentic_graph(
     tool_node,
     reflection_node,
     final_node,
-    memory_update_node
+    memory_update_node,
+    handle_interrupt_node
 ):
     """
     Build the Controller-driven agentic loop for the Pitch to the Panel system.
@@ -62,6 +64,7 @@ def build_agentic_graph(
     workflow.add_node("reflection", reflection_node)
     workflow.add_node("final", final_node)
     workflow.add_node("memory_update", memory_update_node)
+    workflow.add_node("handle_interrupt", handle_interrupt_node)
     
     # Entry Point: Pitch refinement always comes first
     workflow.set_entry_point("pitch_refiner")
@@ -86,9 +89,13 @@ def build_agentic_graph(
             "use_tool": "tool",
             "reflect": "reflection",
             "end_session": "final",
-            "end": "final"
+            "end": "final",
+            "handle_interrupt": "handle_interrupt"
         }
     )
+    
+    # Interrupt handling
+    workflow.add_edge("handle_interrupt", "pitcher")
     
     # Centralized Memory Update before returning to controller
     workflow.add_edge("persona", "memory_update")
@@ -96,7 +103,7 @@ def build_agentic_graph(
     workflow.add_edge("memory_update", "controller")
     
     # These stay direct or handle their own logic
-    workflow.add_edge("pitcher", "controller")
+    workflow.add_edge("pitcher", "memory_update")
     workflow.add_edge("reflection", "controller")
     
     # End node
@@ -109,18 +116,18 @@ def action_router(state):
         return "pitcher"
 
     if state.get("pitcher_interrupt"):
-        return "controller"
-
-    if state.get("step_count", 0) >= state.get("max_steps", 20) or state.get("action") == "end":
-        return "end"
+        return "handle_interrupt"
 
     action = state.get("action")
-    if not action:
-        print("[ROUTER WARNING] Missing action → safe fallback")
-        # Ensure we have a valid target for the fallback action
-        state["action_input"] = {
-            "target": state.get("domain", {}).get("active_panel", ["vc"])[0]
-        }
+
+    # SAFETY: Ensure final_node only reached if action is end or end_session
+    if action in ["end", "end_session"] or state.get("step_count", 0) >= state.get("max_steps", 20):
+        return "end_session"
+
+    # VALID ACTIONS CHECK
+    valid_actions = ["ask_persona", "ask_pitcher", "use_tool", "reflect", "end_session", "handle_interrupt"]
+    if not action or action not in valid_actions:
+        print(f"[ROUTER SAFETY] Invalid or missing action '{action}' → fallback to ask_persona")
         return "ask_persona"
 
     # FIXED: Dynamic reflection interval based on mode

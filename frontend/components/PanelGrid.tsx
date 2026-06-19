@@ -1,66 +1,55 @@
 "use client";
 
 import React from "react";
-import { PanelState } from "../types/v2_types";
+import { AgentRole, AgentStatus, PanelState } from "../types/v2_types";
 import { AgentCard } from "./AgentCard";
 
 interface PanelGridProps {
   panelState: PanelState;
-  onChallenge?: (agentId: string, claim: string) => void;
-  factChecks?: Record<string, string>;
-  challengingAgentId?: string | null;
-  activeHosts?: { host_a: any, host_b: any } | null;
 }
 
-const ALL_AGENTS = {
-  "vc": { id: "vc", name: "Arjun Mehta", role: "Skeptical VC", color: "bg-red-600" },
-  "enthusiastic": { id: "enthusiastic", name: "Priya Sharma", role: "Product Manager", color: "bg-emerald-500" },
-  "hostile": { id: "hostile", name: "Ravi Kumar", role: "Ops Manager", color: "bg-slate-700" },
-  "expert": { id: "expert", name: "Dr. Ananya Iyer", role: "Industry Consultant", color: "bg-blue-600" },
-  "competitor": { id: "competitor", name: "Meera Pillai", role: "Marketing Manager", color: "bg-amber-500" },
-  "beginner": { id: "beginner", name: "Kiran", role: "Student", color: "bg-indigo-500" },
-  "suresh": { id: "suresh", name: "Suresh Nair", role: "Shop Owner", color: "bg-orange-600" },
-  "design_critic": { id: "design_critic", name: "Aisha Thomas", role: "Design Strategist", color: "bg-pink-600" },
-  "dr_iyer_design": { id: "dr_iyer_design", name: "Dr. Ananya Iyer (Design)", role: "Technical Design Critic", color: "bg-blue-700" },
-  "meera_design": { id: "meera_design", name: "Meera Pillai (Design)", role: "Design Client", color: "bg-amber-600" },
-  "interviewer": { id: "interviewer", name: "Claude", role: "Lead Interviewer", color: "bg-primary" },
+const ALL_AGENTS: Record<string, { id: string; name: string; role: AgentRole; color: string }> = {
+  "vc": { id: "vc", name: "Arjun Mehta", role: "vc", color: "bg-red-600" },
+  "enthusiastic": { id: "enthusiastic", name: "Priya Sharma", role: "enthusiastic", color: "bg-emerald-500" },
+  "hostile": { id: "hostile", name: "Ravi Kumar", role: "hostile", color: "bg-slate-700" },
+  "expert": { id: "expert", name: "Dr. Ananya Iyer", role: "expert", color: "bg-blue-600" },
+  "competitor": { id: "competitor", name: "Meera Pillai", role: "competitor", color: "bg-amber-500" },
+  "beginner": { id: "beginner", name: "Kiran", role: "beginner", color: "bg-indigo-500" },
+  "suresh": { id: "suresh", name: "Suresh Nair", role: "hostile", color: "bg-orange-600" },
+  "design_critic": { id: "design_critic", name: "Aisha Thomas", role: "enthusiastic", color: "bg-pink-600" },
+  "dr_iyer_design": { id: "dr_iyer_design", name: "Dr. Ananya Iyer (Design)", role: "expert", color: "bg-blue-700" },
+  "meera_design": { id: "meera_design", name: "Meera Pillai (Design)", role: "competitor", color: "bg-amber-600" },
+  "interviewer": { id: "interviewer", name: "Claude", role: "interviewer", color: "bg-primary" },
 };
 
-export function PanelGrid({ panelState, onChallenge, factChecks, challengingAgentId, activeHosts }: PanelGridProps) {
-  const [agentsList, setAgentsList] = React.useState<any[]>([]);
+const FALLBACK_KEYS = ["interviewer", "vc", "enthusiastic", "hostile", "expert", "competitor", "beginner"];
 
-  React.useEffect(() => {
-    fetch("http://localhost:8000/api/agents")
-      .then(res => res.json())
-      .then(data => {
-        setAgentsList(Object.values(data));
-      })
-      .catch(() => {
-        setAgentsList(Object.values(ALL_AGENTS));
-      });
-  }, []);
-
-  const activeKeys = Object.keys(panelState).length > 0 
-    ? Object.keys(panelState).filter(k => k !== 'pitcher') 
-    : (agentsList.length > 0 ? agentsList.map(a => a.id) : ["interviewer", "vc", "enthusiastic", "hostile", "expert", "competitor", "beginner"]);
+export function PanelGrid({ panelState }: PanelGridProps) {
+  const activeKeys = Object.keys(panelState).length > 0
+    ? Object.keys(panelState).filter(k => k !== "pitcher")
+    : FALLBACK_KEYS;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-2 overflow-y-auto custom-scrollbar h-full max-h-[calc(100vh-250px)]">
       {activeKeys.map((key) => {
-        const state = panelState[key] || { text: "", status: "idle", name: key, role: "Panelist" };
-        const agent = ALL_AGENTS[key as keyof typeof ALL_AGENTS] || { id: key, name: state.name || key, role: state.role || "Panelist" };
-        const isChallenged = challengingAgentId === key;
-        const isHost = key === 'interviewer'; // Interviewer is always 'host'
-        
+        const state = panelState[key];
+        const agent = ALL_AGENTS[key];
+        const name = state?.name || agent?.name || key;
+        const role: AgentRole = (state?.role as AgentRole) || agent?.role || "vc";
+        const status: AgentStatus = state?.status || "idle";
+        const text = state?.text || "";
+        const avatarUrl = state?.avatarUrl || agent?.color;
+
         return (
-          <AgentCard 
+          <AgentCard
             key={key}
             id={key}
-            name={state.name || agent.name}
-            role={state.role || agent.role}
-            status={state.status}
-            text={state.text}
-            isChallenged={!!isChallenged}
+            name={name}
+            role={role}
+            status={status}
+            text={text}
+            avatarUrl={avatarUrl}
+            isChallenged={false}
           />
         );
       })}

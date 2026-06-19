@@ -94,13 +94,23 @@ export function useSpeechRecognition() {
       // Forcing a permission prompt via the MediaDevices API
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach(track => track.stop());
-      
+
       console.log("Permission granted. Initializing recognition...");
       setTranscript("");
-      recognitionRef.current.start();
+      try {
+        recognitionRef.current.start();
+      } catch (startErr: any) {
+        // InvalidStateError: recognition is already started (e.g. auto-restarted
+        // by the browser after a transient error). Treat as a no-op.
+        if (startErr?.name === "InvalidStateError") {
+          console.warn("Recognition already started; ignoring duplicate start.");
+        } else {
+          throw startErr;
+        }
+      }
     } catch (err: any) {
       console.error("Microphone startup failure:", err);
-      
+
       if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
         alert("Microphone access blocked. Click the LOCK ICON next to the URL in your address bar and set Microphone to ALLOW.");
       } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
@@ -108,21 +118,31 @@ export function useSpeechRecognition() {
       } else {
         alert(`Microphone Error: ${err.message || "Unknown error"}`);
       }
-      
+
       setIsRecording(false);
     }
   };
 
   const stopRecording = () => {
-    if (recognitionRef.current) {
-      try {
+    if (!recognitionRef.current) return;
+    try {
+      // abort() is safer than stop() when the recognition hasn't been
+      // fully started yet (e.g. if a previous start() was rejected or
+      // never finished initializing).
+      if (typeof (recognitionRef.current as any).abort === "function") {
+        (recognitionRef.current as any).abort();
+      } else {
         recognitionRef.current.stop();
-        console.log("Recognition stopped manually.");
-      } catch (e) {
+      }
+      console.log("Recognition stopped manually.");
+    } catch (e: any) {
+      if (e?.name === "InvalidStateError") {
+        console.warn("Recognition not in a startable state; ignoring stop.");
+      } else {
         console.error("Error stopping recognition:", e);
       }
-      setIsRecording(false);
     }
+    setIsRecording(false);
   };
 
   return { isRecording, transcript, startRecording, stopRecording };

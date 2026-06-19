@@ -11,9 +11,10 @@ interface AgentCardProps {
   text?: string;
   avatarUrl?: string;
   isChallenged?: boolean;
+  thinkingSignals?: string[];
 }
 
-export function AgentCard({ id, name, role, status, text, avatarUrl, isChallenged }: AgentCardProps) {
+export function AgentCard({ id, name, role, status, text, avatarUrl, isChallenged, thinkingSignals }: AgentCardProps) {
   const isSpeaking = status === "speaking";
 
   return (
@@ -66,14 +67,25 @@ export function AgentCard({ id, name, role, status, text, avatarUrl, isChallenge
       <div className="text-center space-y-2 mb-8">
         <h3 className="text-2xl font-black text-slate-800 tracking-tight leading-none">{name}</h3>
         <p className={`text-[11px] font-extrabold uppercase tracking-[0.2em] px-3 py-1 rounded-full border border-current opacity-40 mx-auto w-fit ${isSpeaking ? 'text-emerald-600' : 'text-slate-400'}`}>
-          {typeof role === 'string' ? role : role}
+          {role}
         </p>
       </div>
 
       <div className="w-full min-h-[80px] flex items-center justify-center">
-         <p className="text-[15px] text-slate-500 font-medium leading-relaxed italic text-center opacity-90 line-clamp-3">
-           {text ? `"${text}"` : "Waiting for the right moment to interject..."}
-         </p>
+         {status === "thinking" && thinkingSignals && thinkingSignals.length > 0 ? (
+           <div className="w-full flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-2 duration-500">
+             {thinkingSignals.map((sig, i) => (
+               <div key={i} className="px-3 py-2 bg-indigo-50/50 border border-indigo-100/50 rounded-xl text-xs font-bold text-indigo-700 flex items-center gap-2">
+                 <span className="material-symbols-outlined text-[14px]">psychology</span>
+                 <span className="line-clamp-1">{sig}</span>
+               </div>
+             ))}
+           </div>
+         ) : (
+           <p className="text-[15px] text-slate-500 font-medium leading-relaxed italic text-center opacity-90 line-clamp-3">
+             {text ? `"${text}"` : "Waiting for the right moment to interject..."}
+           </p>
+         )}
       </div>
     </div>
   );

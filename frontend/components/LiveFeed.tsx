@@ -41,7 +41,11 @@ export function LiveFeed({
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const getAgentData = (name: string) => {
-    return agents.find(a => a.name === name || a.agent_id === name);
+    // panelState values carry `name` (display) and `role`. Match on `name`
+    // (also tolerate the case where a backend turn uses `agent_id` as the
+    // display identifier).
+    if (!name) return undefined;
+    return agents.find(a => a.name === name || (a as any).id === name);
   };
 
   // Find the currently speaking agent to show their streaming text

@@ -49,6 +49,9 @@ export function useAgentVoice() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [isSupported, setIsSupported] = useState(false);
   const cancelledRef = useRef(false);
+  // Session id per speak() invocation — used to invalidate stale callbacks
+  // from a previous utterance chain when a new speak() or stopSpeaking() runs.
+  const sessionRef = useRef<symbol>(Symbol("voice-session-initial"));
   const resumeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -156,7 +159,11 @@ export function useAgentVoice() {
       return;
     }
 
-    // Cancel any in-progress speech first
+    // Cancel any in-progress speech first AND mark the previous session as
+    // superseded so stale onend callbacks bail instead of draining the new
+    // queue. We defer the new queue start by a microtask so cancel() has a
+    // chance to settle (Chrome can fire onend from a cancelled utterance).
+    cancelledRef.current = true;
     window.speechSynthesis.cancel();
 
     const config = AGENT_VOICE_CONFIGS[role] || { pitch: 1, rate: 1 };
@@ -168,15 +175,17 @@ export function useAgentVoice() {
     }
 
     console.log(`[Voice] ${role}: Speaking ${chunks.length} chunks...`);
-    cancelledRef.current = false;
+    const mySession = Symbol("voice-session");
+    sessionRef.current = mySession;
     setIsSpeaking(true);
     const voice = getBestVoice(role);
     let chunkIndex = 0;
 
     const speakNextChunk = () => {
-      if (cancelledRef.current || chunkIndex >= chunks.length) {
+      // Bail if a newer speak() or a stopSpeaking() has taken over.
+      if (sessionRef.current !== mySession || chunkIndex >= chunks.length) {
         setIsSpeaking(false);
-        if (onEnd) onEnd();
+        if (sessionRef.current === mySession && onEnd) onEnd();
         return;
       }
 
@@ -185,7 +194,7 @@ export function useAgentVoice() {
 
       const utterance = new SpeechSynthesisUtterance(chunk);
       if (voice) utterance.voice = voice;
-      
+
       const offsets = getNameOffset(role);
       utterance.pitch = Math.max(0.5, Math.min(2, config.pitch + offsets.pitch));
       utterance.rate = Math.max(0.5, Math.min(2, config.rate + offsets.rate));
@@ -195,7 +204,6 @@ export function useAgentVoice() {
       utterance.onend = () => {
         if (fired) return;
         fired = true;
-        // Minimal delay between chunks for natural flow
         setTimeout(speakNextChunk, 5);
       };
 
@@ -211,12 +219,16 @@ export function useAgentVoice() {
       window.speechSynthesis.speak(utterance);
     };
 
-    speakNextChunk();
+    Promise.resolve().then(() => {
+      if (sessionRef.current === mySession) speakNextChunk();
+    });
   };
 
   const stopSpeaking = () => {
     if (isSupported) {
       cancelledRef.current = true;
+      // Invalidate the current session so any in-flight speakNextChunk bails.
+      sessionRef.current = Symbol("voice-session-cancelled");
       window.speechSynthesis.cancel();
       setIsSpeaking(false);
     }

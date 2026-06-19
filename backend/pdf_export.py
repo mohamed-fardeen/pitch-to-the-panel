@@ -11,7 +11,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from orchestrator import AGENTS_CONFIG, generate_radar_chart_image
+from orchestrator import AGENTS_CONFIG
 
 def create_score_chart(memory: dict) -> io.BytesIO:
     """Generate a performance score bar chart based on memory extraction."""
@@ -154,7 +154,7 @@ async def generate_pdf_report(session: dict) -> bytes:
     
     # 3. PANEL OVERVIEW
     content.append(Paragraph("Panel Composition", h2_style))
-    active_panel = session.get("active_panel", [])
+    active_panel = session.get("domain", {}).get("active_panel", session.get("active_panel", []))
     if active_panel:
         panel_data = []
         for agent_id in active_panel:
@@ -292,6 +292,58 @@ async def generate_pdf_report(session: dict) -> bytes:
         else:
             content.append(Paragraph(str(black_swan), body_style))
 
+    # 9. AI PITCH REVISION (Phase 4)
+    revised_pitch = session.get("revised_pitch")
+    if revised_pitch:
+        content.append(PageBreak())
+        content.append(HRFlowable(width="100%", thickness=2, color=brand_blue, spaceBefore=0))
+        content.append(Spacer(1, 12))
+        content.append(Paragraph("AI-Powered Pitch Revision", h1_style))
+        content.append(Paragraph(
+            "The following is a revised version of the original pitch, rewritten by the AI coach "
+            "to directly address the panel's criticisms and close identified gaps.",
+            body_style
+        ))
+        content.append(Spacer(1, 10))
+
+        # Original pitch box
+        content.append(Paragraph("Original Pitch", ParagraphStyle(
+            'orig_label', fontSize=9, textColor=danger_red, fontName='Helvetica-Bold', spaceAfter=4
+        )))
+        original = session.get("pitch_summary", "")
+        orig_style = ParagraphStyle('orig_box', fontSize=10, leading=15,
+                                    textColor=HexColor('#374151'),
+                                    backColor=HexColor('#FEF2F2'),
+                                    borderPad=10, leftIndent=10, rightIndent=10,
+                                    spaceAfter=12)
+        content.append(Paragraph(original, orig_style))
+
+        # Revised pitch box
+        content.append(Paragraph("Revised Pitch", ParagraphStyle(
+            'rev_label', fontSize=9, textColor=success_green, fontName='Helvetica-Bold', spaceAfter=4
+        )))
+        rev_style = ParagraphStyle('rev_box', fontSize=10, leading=15,
+                                   textColor=HexColor('#374151'),
+                                   backColor=HexColor('#ECFDF5'),
+                                   borderPad=10, leftIndent=10, rightIndent=10,
+                                   spaceAfter=12)
+        content.append(Paragraph(revised_pitch, rev_style))
+
+        # Improvements addressed
+        verdict_parts = session.get("verdict_parts", {})
+        improvements = [
+            verdict_parts.get("weakness", ""),
+            verdict_parts.get("fix", ""),
+        ]
+        improvements = [i for i in improvements if i]
+        if improvements:
+            content.append(Paragraph("Issues Addressed in Revision", ParagraphStyle(
+                'imp_label', fontSize=9, textColor=brand_blue, fontName='Helvetica-Bold', spaceAfter=6
+            )))
+            for imp in improvements:
+                content.append(Paragraph(f"✓  {imp}", bullet_style))
+
     doc.build(content)
     buffer.seek(0)
     return buffer.read()
+
