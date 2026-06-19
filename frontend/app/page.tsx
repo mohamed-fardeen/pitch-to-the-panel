@@ -26,7 +26,7 @@ export default function Home() {
   const { speak, stopSpeaking } = useAgentVoice();
   const router = useRouter();
   
-  const [provider, setProvider] = useState<Provider>("anthropic");
+  const [provider, setProvider] = useState<Provider>("groq");
   const [stage, setStage] = useState<"idle" | "pitching" | "hitl_summary" | "conversation" | "verdict">("idle");
   const [showVerdictModal, setShowVerdictModal] = useState(false);
   const [panelState, setPanelState] = useState<PanelState>({});
@@ -78,6 +78,15 @@ export default function Home() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const turnQueueRef = useRef<any[]>([]);
   const isProcessingQueueRef = useRef(false);
+
+  // Connection state for the START DEBATE click — gives the user immediate
+  // visual feedback while the SSE connection is being established.
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  // Mirror of `stage` for use inside async callbacks (where the closure would
+  // otherwise capture a stale value).
+  const stageRef = useRef(stage);
+  useEffect(() => { stageRef.current = stage; }, [stage]);
 
   const speakAsync = (role: AgentRole, text: string): Promise<void> => {
     return new Promise((resolve) => {
@@ -271,13 +280,14 @@ export default function Home() {
     stopRecording();
     const currentPitch = manualText;
     addLog("Evaluating Proposal...");
+    setIsConnecting(true);
+    setConnectionError(null);
 
     const url = new URL(`${API_BASE}/stream/main`);
     url.searchParams.append("session_id", sessionId);
     url.searchParams.append("pitch", currentPitch);
     url.searchParams.append("provider", provider);
     url.searchParams.append("mode", difficulty);
-    url.searchParams.append("aggressiveness", aggressiveness.toString());
     if (pitcherId) url.searchParams.append("pitcher_id", pitcherId);
 
     if (eventSourceRef.current) {
@@ -289,6 +299,23 @@ export default function Home() {
     eventSourceRef.current = eventSource;
     setIsStreaming(true);
 
+    // Hard timeout: if the backend never sends the first event in 60s,
+    // surface a clear error to the user instead of letting them stare at
+    // an idle screen.
+    const connectionTimeout = setTimeout(() => {
+      if (eventSourceRef.current === eventSource && stageRef.current !== "hitl_summary") {
+        console.error("[SSE] Connection timeout — no response in 60s");
+        eventSource.close();
+        eventSourceRef.current = null;
+        setIsStreaming(false);
+        setIsConnecting(false);
+        setConnectionError(
+          `Backend at ${API_BASE} did not respond within 60s. ` +
+          `Is the FastAPI server running? Try: cd backend && uvicorn main:app --reload`
+        );
+      }
+    }, 60_000);
+
     eventSource.onopen = () => {
       console.log("Stream connected for session:", sessionId);
       debugStream.setConnected(true);
@@ -297,6 +324,8 @@ export default function Home() {
     eventSource.addEventListener("hitl_summary_approval", (e: any) => {
       const data = JSON.parse(e.data);
       console.log("Event received: hitl_summary_approval", data);
+      clearTimeout(connectionTimeout);
+      setIsConnecting(false);
       setHitlData(data);
       setOriginalSummary(data.summary);
       setAwaitingPitchConfirmation(true);
@@ -371,11 +400,11 @@ export default function Home() {
       console.log("Event received: agent_turn", data);
       setCurrentAgentId(data.agent_id);
       setActiveAgent(null);
-      
+
       if (data.type === "interviewer_invitation") {
         setWaitingForAnswer(true);
       }
-      
+
       if (data.content) {
         enqueueTurn(data);
       }
@@ -398,6 +427,8 @@ export default function Home() {
 
     eventSource.addEventListener("verdict_complete", (e: any) => {
       const data = JSON.parse(e.data);
+      clearTimeout(connectionTimeout);
+      setIsConnecting(false);
       setVerdictData(data);
       setStage("verdict");
       setIsStreaming(false);
@@ -418,12 +449,15 @@ export default function Home() {
       try {
         const data = JSON.parse(e.data);
         console.error("Fatal stream error from server:", data);
+        setConnectionError(typeof data === "string" ? data : (data?.data ?? JSON.stringify(data)));
       } catch {
         console.error("Fatal stream error:", e);
       }
+      clearTimeout(connectionTimeout);
       eventSource.close();
       eventSourceRef.current = null;
       setIsStreaming(false);
+      setIsConnecting(false);
       setActiveAgent(null);
     });
 
@@ -460,15 +494,25 @@ export default function Home() {
     eventSource.onerror = (e: any) => {
       if (eventSource.readyState === EventSource.CLOSED) {
         console.error("SSE connection closed unexpectedly.");
+        clearTimeout(connectionTimeout);
         eventSourceRef.current = null;
         setIsStreaming(false);
+        setIsConnecting(false);
         setActiveAgent(null);
+        // Only set the error if we never received any event (otherwise it's
+        // likely a transient mid-session disconnect).
+        if (stageRef.current === "idle" || stageRef.current === "pitching") {
+          setConnectionError(
+            `Lost connection to backend at ${API_BASE}. ` +
+            `Is uvicorn still running on port 8000?`
+          );
+        }
       } else {
         // readyState is CONNECTING — browser is auto-reconnecting, don't interfere
         console.warn("SSE transient error, browser reconnecting...");
       }
     };
-    
+
     eventSource.addEventListener("conversation_complete", (e: any) => {
       const data = JSON.parse(e.data);
       console.log("Event received: conversation_complete", data);
@@ -1020,16 +1064,49 @@ export default function Home() {
                            <span className="text-base uppercase tracking-widest">{isRecording ? 'Stop' : 'Speak'}</span>
                          </button>
 
-                         <button 
-                            onClick={finishPitch} 
-                            disabled={!sessionId || !manualText}
-                            className="flex-1 py-7 bg-[#006948] text-white font-extrabold text-2xl rounded-full shadow-2xl shadow-emerald-900/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-4 uppercase tracking-tighter disabled:opacity-50"
+<button
+                            onClick={finishPitch}
+                            disabled={!sessionId || !manualText || isConnecting}
+                            className="flex-1 py-7 bg-[#006948] text-white font-extrabold text-2xl rounded-full shadow-2xl shadow-emerald-900/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-4 uppercase tracking-tighter disabled:opacity-50 disabled:cursor-not-allowed"
                          >
-                           Start Debate
-                           <span className="material-symbols-outlined text-2xl">rocket_launch</span>
+                           {isConnecting ? (
+                             <>
+                               <span className="inline-block w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                               Connecting…
+                             </>
+                           ) : (
+                             <>
+                               Start Debate
+                               <span className="material-symbols-outlined text-2xl">rocket_launch</span>
+                             </>
+                           )}
                          </button>
-                      </div>
+                       </div>
                     </div>
+
+                    {/* Connection error banner */}
+                    {connectionError && (
+                      <div className="w-full max-w-4xl mt-6 bg-rose-50 border-2 border-rose-300 rounded-2xl p-6 flex items-start gap-4 animate-in fade-in slide-in-from-top-2">
+                        <span className="material-symbols-outlined text-rose-500 text-3xl shrink-0">error</span>
+                        <div className="flex-1 space-y-2">
+                          <p className="text-sm font-black text-rose-700 uppercase tracking-widest">Connection Failed</p>
+                          <p className="text-sm text-rose-600 font-medium leading-relaxed">{connectionError}</p>
+                        </div>
+                        <button
+                          onClick={() => setConnectionError(null)}
+                          className="text-rose-400 hover:text-rose-600 transition-colors shrink-0"
+                        >
+                          <span className="material-symbols-outlined">close</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Last status log entry */}
+                    {logs.length > 0 && !connectionError && (
+                      <div className="w-full max-w-4xl mt-4 text-center">
+                        <p className="text-xs text-slate-400 font-mono">{logs[logs.length - 1]}</p>
+                      </div>
+                    )}
                   </div>
                ) : stage === "hitl_summary" && hitlData ? (
                   <div className="h-full flex flex-col items-center justify-center p-6 animate-in fade-in duration-700">
