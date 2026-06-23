@@ -150,7 +150,7 @@ export default function Home() {
             </Link>
           </nav>
           <Link
-            href="/app/pitch/new"
+            href="/signin?callbackUrl=/app/pitch/new"
             className="rounded-full bg-ink-900 px-4 py-2 text-sm font-medium text-white hover:bg-ink-700"
           >
             Try PanelMind →
@@ -178,7 +178,7 @@ export default function Home() {
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <Link
-              href="/app/pitch/new"
+              href="/signin?callbackUrl=/app/pitch/new"
               className="rounded-full bg-ink-900 px-8 py-4 text-base font-semibold text-white shadow-lg shadow-ink-900/20 hover:bg-ink-800"
             >
               Start a pitch session →

@@ -23,52 +23,20 @@ from prompts import (
     FACT_CHECK_PROMPT
 )
 
-AGENTS_CONFIG = {
-    "vc": {
-        "name": "Arjun (VC)",
-        "role": "Venture Capitalist",
-        "system_prompt": "ROI focused. Challenges weak business models. Direct and sharp."
-    },
-    "enthusiastic": {
-        "name": "Priya (Designer)",
-        "role": "Design Strategist",
-        "system_prompt": "UX/UI focused. Optimistic and creative. Suggests improvements."
-    },
-    "hostile": {
-        "name": "Ravi (Operator)",
-        "role": "Operations Manager",
-        "system_prompt": "Execution and risk focused. Cautious and skeptical. Highlights failures."
-    },
-    "expert": {
-        "name": "Expert",
-        "role": "Technical Consultant",
-        "system_prompt": "Technical validity focused. Analytical and objective. Fact-checks claims."
-    },
-    "beginner": {
-        "name": "Kiran (Beginner)",
-        "role": "Curious Consumer",
-        "system_prompt": "Clarity focused. Confused and curious. Asks basic questions."
-    },
-    "interviewer": {
-        "name": "Lead Strategist",
-        "role": "Lead Strategist",
-        "system_prompt": "You are the Lead Strategist running a focus group."
-    }
-}
+# ─── Agent personas (Tier 0d) ──────────────────────────────────────
+# The persona catalog is now loaded from YAML files at apps/api/agents/
+# personas/. The dicts below are computed from the YAMLs at import time.
+# Edit the YAMLs to change a persona — no code changes needed.
+# See docs/personas.md.
 
 from services.llm import llm_provider
 from graph import FocusGroupState, build_agentic_graph
 from typing import Literal, Annotated
 import operator
 
-AGENT_GOALS = {
-    "vc":           "Identify ROI potential and market size. Direct and sharp business model critique.",
-    "enthusiastic": "Improve UX and emotional engagement. Creative and optimistic suggestions.",
-    "hostile":      "Expose execution risks and operational failure points. Skeptical and cautious.",
-    "expert":       "Validate technical feasibility and fact-check claims with analytical objectivity.",
-    "beginner":     "Verify simplicity and clarity. Ask fundamental questions about purpose and usability.",
-    "interviewer":  "Guide the session with strategic questions. Surface hidden assumptions."
-}
+# Load the catalog eagerly so AGENTS_CONFIG / AGENT_GOALS / OCEAN_PROFILES
+# are plain dicts at module level (as the legacy code expects).
+from agents.loader import AGENTS_CONFIG, AGENT_GOALS, OCEAN_PROFILES  # noqa: E402,F401
 
 class VerdictSchema(BaseModel):
     strongest_point: str = Field(description="The strongest strategic advantage")

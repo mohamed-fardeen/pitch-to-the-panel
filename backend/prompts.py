@@ -198,24 +198,24 @@ Focus on: {focus}
 OUTPUT: Only the refined text.
 """
 
-PERSONA_ANCHORS = {
-    "vc": "Arjun (VC): Focused on ROI, scale, and monetization. Sharp and direct. Challenges weak business models.",
-    "enthusiastic": "Priya (Designer): Focused on UX and engagement. Creative and optimistic. Suggests improvements.",
-    "hostile": "Ravi (Operator): Focused on execution and risk. Cautious and skeptical. Highlights failures.",
-    "beginner": "Kiran (Beginner): Focused on clarity. Confused and curious. Asks basic questions.",
-    "expert": "Expert: Focused on technical validity. Analytical. Fact-checks claims."
-}
+# ─── Persona anchors (Tier 0d) ─────────────────────────────────────
+# Built from the YAML catalog at apps/api/agents/personas/. Kept as a
+# module-level dict for backwards compatibility with the legacy prompt
+# templates. Edit the YAMLs to change a persona anchor.
 
-# (Optional: If still using OCEAN lookup for behavior string)
-OCEAN_PROFILES = {
-    "vc": {"openness": 0.35, "conscientiousness": 0.92, "extraversion": 0.58, "agreeableness": 0.18, "neuroticism": 0.42},
-    "enthusiastic": {"openness": 0.88, "conscientiousness": 0.55, "extraversion": 0.82, "agreeableness": 0.72, "neuroticism": 0.35},
-    "hostile": {"openness": 0.22, "conscientiousness": 0.78, "extraversion": 0.45, "agreeableness": 0.15, "neuroticism": 0.72},
-    "expert": {"openness": 0.62, "conscientiousness": 0.97, "extraversion": 0.28, "agreeableness": 0.52, "neuroticism": 0.38},
-    "competitor": {"openness": 0.48, "conscientiousness": 0.82, "extraversion": 0.55, "agreeableness": 0.45, "neuroticism": 0.28},
-    "beginner": {"openness": 0.75, "conscientiousness": 0.38, "extraversion": 0.68, "agreeableness": 0.78, "neuroticism": 0.45},
-    "suresh": {"openness": 0.18, "conscientiousness": 0.88, "extraversion": 0.38, "agreeableness": 0.42, "neuroticism": 0.55},
-    "design_critic": {"openness": 0.88, "conscientiousness": 0.72, "extraversion": 0.62, "agreeableness": 0.38, "neuroticism": 0.32}
+from agents.loader import (  # noqa: E402
+    AGENT_GOALS,
+    AGENTS_CONFIG,
+    OCEAN_PROFILES,
+    get_catalog,
+)
+
+PERSONA_ANCHORS = {
+    persona_id: (
+        f"{cfg['name']}: Focused on {cfg['role'].lower()}. "
+        f"{cfg['system_prompt']}"
+    )
+    for persona_id, cfg in AGENTS_CONFIG.items()
 }
 
 FINAL_ANALYST_PROMPT = """

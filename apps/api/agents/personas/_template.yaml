@@ -1,0 +1,38 @@
+# Template for a new persona
+#
+# Copy this file to a new name (e.g. `fintech_vc.yaml`), fill in the
+# fields, and submit a PR. No code changes needed — the loader picks
+# up new files at startup.
+#
+# Required fields: id, name, role, system_prompt
+# Recommended: goal, ocean
+# Optional: enabled, config (free-form)
+
+id: my_new_persona
+name: "Display Name"
+role: "Short role label"
+system_prompt: "One-line description. Used in the system prompt."
+
+# Full goal text — used in the persona prompt verbatim.
+goal: "What this persona's #1 priority is when evaluating a pitch."
+
+# Big-Five personality profile (each value 0..1).
+# Defaults to a neutral "balanced" profile if omitted.
+ocean:
+  openness: 0.5            # curiosity / preference for novelty
+  conscientiousness: 0.5   # methodical vs. spontaneous
+  extraversion: 0.5        # vocal vs. quiet
+  agreeableness: 0.5       # supportive vs. confrontational
+  neuroticism: 0.5         # risk-sensitive vs. calm
+
+# Whether this persona is included in default panel compositions.
+enabled: true
+
+# Free-form config (UI presentation). Keys are read by the web app
+# but ignored by the orchestrator.
+config:
+  color: "#6366F1"        # hex color for the panel card
+  avatar: "🧑"             # emoji fallback avatar
+  voice: "male_neutral"   # TTS voice preference
+  hidden: false           # set true for internal personas
+  sort_order: 99          # display order (lower = earlier)

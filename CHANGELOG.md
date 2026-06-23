@@ -15,18 +15,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Persistence layer: SQLAlchemy 2.0 async models, `SessionRepository`
   abstraction, `InMemorySessionRepository` (default), and
   `SqlAlchemySessionRepository` (production) (Tier 0b)
-- `pytest.ini` and 75 pytest tests covering both repository implementations,
+- `pytest.ini` and 95 pytest tests covering both repository implementations,
   the legacy `sanitize_pitch_input`, the legacy `extract_json`, the legacy
-  `VerdictSchema`, the new `SessionPersistenceBridge`, and FastAPI
-  integration via `TestClient` (Tier 0b/0c)
+  `VerdictSchema`, the new `SessionPersistenceBridge`, FastAPI
+  integration via `TestClient`, and the persona YAML loader (Tier 0b/0c/0d)
 - `SessionPersistenceBridge` (Tier 0c) — async-mirrors session-dict writes
   to the durable repository, filters out in-process state (asyncio.Event
   objects, etc.), survives DB outages
 - FastAPI lifespan hook that creates the SQL schema on startup
   (`init_repository_schema`) and disposes the engine on shutdown
 - `apps/api/data/panelmind.db` (SQLite) created automatically on first run
+- **Persona catalog** (Tier 0d): 6 YAMLs in `apps/api/agents/personas/`
+  (vc, designer, operator, expert, beginner, interviewer) plus a
+  `_template.yaml` for new contributors
+- **Persona loader** (`backend/agents/loader.py`): reads YAMLs at
+  import time, validates, caches, exposes `PersonaCatalog` plus
+  backwards-compat shims for the legacy orchestrator
+- **NextAuth v5** (Tier 0e): Google + GitHub OAuth providers, sign-in
+  and sign-out pages, edge middleware that gates `/app/*` and
+  `/api/pitches/*`, SessionProvider in root layout
 
 ### Changed
+- **Personas as YAML**: replaced the hardcoded `AGENTS_CONFIG` /
+  `AGENT_GOALS` / `OCEAN_PROFILES` / `PERSONA_ANCHORS` dicts in
+  `backend/orchestrator.py` and `backend/prompts.py` with a YAML-based
+  catalog at `apps/api/agents/personas/`. Adding a new persona is now
+  one YAML file. See `docs/personas.md` for the schema.
+- **Persona loader** (`backend/agents/loader.py`): reads YAMLs at
+  import time, validates required fields, skips malformed files,
+  exposes a typed `PersonaCatalog`. Backwards-compat shims for
+  `AGENTS_CONFIG` / `AGENT_GOALS` / `OCEAN_PROFILES` are computed
+  from the catalog so the legacy orchestrator code works unchanged.
 - **Security**: rewrote the `sanitize_pitch_input` injection-pattern regexes
   to actually match multi-word variants like "ignore all previous
   instructions" (the old regex required `instructions` to immediately
