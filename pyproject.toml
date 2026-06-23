@@ -1,0 +1,61 @@
+# Root pyproject.toml — workspace-level config for ruff and mypy.
+# This complements apps/api/pyproject.toml (which has the package
+# metadata + build config).
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "apps/api/data",
+    "apps/web",
+    "frontend",
+    "stitch_deliverables",
+    "node_modules",
+    ".venv",
+    "venv",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "C4",  # flake8-comprehensions
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501", # line length is handled by formatter
+    "B008", # function call in default argument (we use this for Pydantic)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+"**/__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+exclude = [
+    "apps/api/data",
+    "frontend",
+    "stitch_deliverables",
+    "node_modules",
+    ".venv",
+    "venv",
+    "tests",
+]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false

@@ -34,6 +34,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **NextAuth v5** (Tier 0e): Google + GitHub OAuth providers, sign-in
   and sign-out pages, edge middleware that gates `/app/*` and
   `/api/pitches/*`, SessionProvider in root layout
+- **Docker** (Tier 0f): `Dockerfile.api` (multi-stage, ~150 MB runtime)
+  and `Dockerfile.web` (Next.js standalone, ~120 MB runtime) plus
+  `docker-compose.yml` with a named volume for SQLite persistence
+- **GitHub Actions CI** (Tier 0f): `.github/workflows/ci.yml` runs
+  backend lint + typecheck + test, web lint + typecheck + build,
+  and Docker image builds on every push
+- **Rate limiting** (Tier 0f): `backend/rate_limit.py` configures
+  SlowAPI with 60 req/min per IP by default, in-memory storage,
+  env-tunable
+- **Structured logging** (Tier 0f): `LOG_LEVEL` env var, basic
+  formatter with timestamps; ready to swap to structlog/JSON in
+  Tier 1
+- **Root `pyproject.toml`**: ruff + mypy workspace config that
+  applies to all Python code in the repo
+
+### Removed
+- **Meshy 3D endpoint** (`/api/pitch/generate-3d`): hackathon-era
+  dead code that contributed nothing to the pitch evaluation flow.
+  `generate_3d_from_sketch()` and the `MESHY_API_URL` constant
+  are gone from `orchestrator.py` too.
+
+### Security
+- **CORS lockdown** (Tier 0f): `allow_origins=["*"]` replaced with
+  an env-driven allowlist (`ALLOWED_ORIGINS`). Setting wildcards
+  with `allow_credentials=True` is a known anti-pattern.
 
 ### Changed
 - **Personas as YAML**: replaced the hardcoded `AGENTS_CONFIG` /

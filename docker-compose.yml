@@ -1,0 +1,61 @@
+# docker-compose.yml — One-command local development environment.
+#
+# Usage:
+#   cp .env.example .env
+#   # Edit .env — at minimum, set one LLM provider key
+#   docker compose up
+#
+# Then visit:
+#   http://localhost:3000  (web UI)
+#   http://localhost:8000  (API + OpenAPI docs at /docs)
+#
+# Data is persisted in a named volume (panelmind_data). To start from
+# scratch, run `docker compose down -v` to remove the volume.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: panelmind-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Inherit everything from .env, plus overrides
+      DATABASE_URL: "sqlite+aiosqlite:////app/apps/api/data/panelmind.db"
+      ALLOWED_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+      PANELMIND_PERSONAS_DIR: "/opt/personas"
+      RATE_LIMIT_ENABLED: "true"
+      LOG_LEVEL: "INFO"
+    volumes:
+      - panelmind_data:/app/apps/api/data
+    healthcheck:
+      # FastAPI doesn't have a built-in /healthz yet, so we use the
+      # OpenAPI schema endpoint as a liveness probe.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: panelmind-web
+    ports:
+      - "3000:3000"
+    environment:
+      # The web app talks to the API at the service name (not localhost)
+      NEXT_PUBLIC_API_BASE: "http://api:8000/api"
+      NEXTAUTH_URL: "http://localhost:3000"
+      # Inherits NEXTAUTH_SECRET, GOOGLE_ID/SECRET, GITHUB_ID/SECRET from .env
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  panelmind_data:
+    name: panelmind_data

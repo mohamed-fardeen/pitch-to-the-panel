@@ -191,42 +191,6 @@ def save_pitcher_memory(pitcher_id: str, session_data: dict, verdict: str = ""):
         with open(MEMORY_FILE, "w") as f: json.dump(memory, f, indent=2)
     except Exception: pass
 
-MESHY_API_URL = "https://api.meshy.ai/v1/image-to-3d"
-
-async def generate_3d_from_sketch(image_url: str) -> dict:
-    api_key = os.getenv("MESHY_API_KEY")
-    if not api_key: return {"error": "No Meshy API key"}
-    
-    headers = {"Authorization": f"Bearer {api_key}"}
-    payload = {
-        "image_url": image_url,
-        "enable_pbr": True,
-    }
-    
-    try:
-        import requests
-        response = await asyncio.to_thread(requests.post, MESHY_API_URL, headers=headers, json=payload)
-        task_data = response.json()
-        task_id = task_data.get("result")
-        
-        if not task_id: return {"error": f"Task creation failed: {task_data}"}
-        
-        for _ in range(30):
-            await asyncio.sleep(6)
-            status_res = await asyncio.to_thread(requests.get, f"{MESHY_API_URL}/{task_id}", headers=headers)
-            status_data = status_res.json()
-            if status_data.get("status") == "SUCCEEDED":
-                return {
-                    "thumbnail_url": status_data.get("thumbnail_url"),
-                    "model_url": status_data.get("model_url"),
-                    "task_id": task_id
-                }
-            if status_data.get("status") == "FAILED":
-                return {"error": "Meshy generation failed"}
-
-        return {"error": "Timeout waiting for 3D model"}
-    except Exception as e:
-        return {"error": str(e)}
 
 async def generate_radar_chart_image(scores: dict) -> str:
     try:

@@ -1,0 +1,76 @@
+# Dockerfile for the PanelMind FastAPI backend.
+#
+# Multi-stage build to keep the runtime image small.
+#
+# Build:
+#   docker build -f Dockerfile.api -t panelmind-api:latest .
+# Run:
+#   docker run --rm -p 8000:8000 --env-file .env panelmind-api:latest
+
+# ─── Stage 1: build dependencies in a venv ────────────────────────
+FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a venv and install the package + deps
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /build
+
+# Install the API package (editable so the loader finds the personas YAML)
+COPY apps/api/pyproject.toml ./apps/api/pyproject.toml
+COPY apps/api/README.md ./apps/api/README.md
+COPY apps/api/agents ./apps/api/agents
+
+COPY backend ./backend
+
+# Combine everything into a single layout that the runtime can use
+RUN cp -r apps/api/agents /opt/personas
+RUN pip install --upgrade pip && \
+    pip install -e ./apps/api
+
+# Install runtime dependencies that aren't in pyproject.toml yet
+# (legacy requirements.txt has the historical deps)
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN pip install -r ./backend/requirements.txt
+
+# ─── Stage 2: slim runtime image ───────────────────────────────────
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PANELMIND_PERSONAS_DIR=/opt/personas
+
+# Copy the venv from the builder stage
+COPY --from=builder /opt/venv /opt/venv
+
+# Copy the source so the API can find the persistence layer and orchestrator
+WORKDIR /app
+COPY --from=builder /build/apps /app/apps
+COPY --from=builder /build/backend /app/backend
+COPY --from=builder /opt/personas /opt/personas
+
+# Create the data directory for SQLite
+RUN mkdir -p /app/apps/api/data
+
+# Expose the API port
+EXPOSE 8000
+
+# Default: run uvicorn
+# Use 1 worker in dev (sufficient for a hobby deployment). Scale up in prod.
+CMD ["uvicorn", "main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--app-dir", "/app/backend", \
+     "--workers", "1"]

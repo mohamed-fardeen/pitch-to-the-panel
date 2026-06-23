@@ -5,13 +5,13 @@ from sse_starlette.sse import EventSourceResponse
 import json
 import asyncio
 import logging
+import os
 
 from orchestrator import (
     sessions,
     handle_verdict_pushback,
     get_scoring_radar,
     save_pitcher_memory,
-    generate_3d_from_sketch,
     generate_fact_check,
     generate_rebuttal_response,
     stream_echochamber,
@@ -21,10 +21,26 @@ from services.llm import llm_provider
 from persistence import get_repository
 from persistence.sync import SessionPersistenceBridge
 from persistence.models import VerdictSignal
+from rate_limit import install_rate_limiter
 
+# ─── Logging configuration (Tier 0f) ─────────────────────────────
+_LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, _LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+# Rate limiting (Tier 0f). Default: 60 req/min per IP, in-memory storage.
+# Set RATE_LIMIT_ENABLED=false to disable. Wire per-endpoint limits in Tier 1.
+if os.getenv("RATE_LIMIT_ENABLED", "true").lower() in ("true", "1", "yes"):
+    install_rate_limiter(app)
+    logger.info("Rate limiting installed (default: 60 req/min per IP).")
+else:
+    logger.info("Rate limiting disabled via RATE_LIMIT_ENABLED=false.")
 
 # Persistence bridge (Tier 0c). Mirrors writes to the legacy `sessions`
 # dict into the durable SessionRepository. Defaults to the in-memory
@@ -41,9 +57,22 @@ def _bridge() -> SessionPersistenceBridge:
     return _persistence_bridge
 
 
+# ─── CORS lockdown (Tier 0f) ───────────────────────────────────────
+# Read the allowed origins from the ALLOWED_ORIGINS env var. Default
+# to localhost dev origins. In production, set this to your real domain.
+# Setting `allow_credentials=True` together with `allow_origins=["*"]`
+# is a security hazard — always be explicit.
+_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -178,9 +207,6 @@ class PushbackRequest(BaseModel):
     session_id: str
     pushback: str
     provider: str = "ollama"
-
-class Sketch3DRequest(BaseModel):
-    image_url: str
 
 class AnswerCoachRequest(BaseModel):
     session_id: str
@@ -429,9 +455,10 @@ async def score_pitch(request: Request):
     
     return await get_scoring_radar(session["pitch_summary"], {}, data.get("provider", session.get("provider", "ollama")))
 
-@app.post("/api/pitch/generate-3d")
-async def meshy_3d(req: Sketch3DRequest):
-    return await generate_3d_from_sketch(req.image_url)
+# ─── Removed in Tier 0f ────────────────────────────────────────────
+# The Meshy 3D endpoint was a hackathon-era leftover that contributed
+# nothing to the pitch evaluation flow. /api/pitch/generate-3d and
+# Sketch3DRequest are gone. See git history if you want to bring it back.
 
 @app.post("/api/conversation/coach")
 async def get_answer_coach(req: AnswerCoachRequest):

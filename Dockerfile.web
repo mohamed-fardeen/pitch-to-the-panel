@@ -1,0 +1,55 @@
+# Dockerfile for the PanelMind Next.js web app.
+#
+# Multi-stage build: install deps, build, then a slim runtime image.
+# We re-enable `output: "standalone"` here for the production build —
+# this requires symlink privileges on Linux (the default), which is
+# why we left it disabled in apps/web/next.config.js for Windows dev.
+
+# ─── Stage 1: install + build ─────────────────────────────────────
+FROM node:20-alpine AS builder
+
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production
+
+WORKDIR /build
+
+# Copy the root monorepo files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+
+# Copy the web app
+COPY apps/web ./apps/web
+
+# Install pnpm via corepack (ships with node 20+)
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile --filter @panelmind/web...
+
+# Build the app with standalone output for the runtime image
+# Re-enable standalone via NEXT_OUTPUT_STANDALONE env or by patching the
+# config file. We do it inline:
+RUN sed -i "s|// output: \"standalone\"|output: \"standalone\"|" apps/web/next.config.js
+
+# Build
+RUN pnpm --filter @panelmind/web build
+
+# ─── Stage 2: runtime ──────────────────────────────────────────────
+FROM node:20-alpine AS runtime
+
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+WORKDIR /app
+
+# Copy the standalone build output
+COPY --from=builder /build/apps/web/.next/standalone ./
+# Copy the static assets (Next.js doesn't include these in standalone)
+COPY --from=builder /build/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /build/apps/web/public ./apps/web/public
+
+EXPOSE 3000
+
+# Start the standalone server
+CMD ["node", "apps/web/server.js"]
