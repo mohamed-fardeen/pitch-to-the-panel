@@ -1,4 +1,4 @@
-# Dependencies
+# ─── Dependencies ───────────────────────────────────────────────
 node_modules/
 venv/
 .venv/
@@ -7,27 +7,41 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pnpm-store/
 
-# Next.js
+# ─── Build outputs ─────────────────────────────────────────────
 .next/
 out/
 build/
+dist/
+target/
+*.tsbuildinfo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+htmlcov/
 
-# Environment
+# ─── Next.js ───────────────────────────────────────────────────
+# (most already covered by .next/ above)
+
+# ─── Environment ───────────────────────────────────────────────
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 *.env
+!.env.example
 
-# IDE / System
+# ─── IDE / System ──────────────────────────────────────────────
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
 
-# Antigravity / AI
+# ─── Claude / AI tools ────────────────────────────────────────
 .gemini/
 .agents/
 .agent/
@@ -35,11 +49,31 @@ _agents/
 _agent/
 tmp/
 
-# App Specific
-backend/db/pitch_memory.db
-frontend/public/charts/
-
-# Exclusions for V4
-image/
+# ─── Scratch / planning artifacts ─────────────────────────────
 implementation_plan/
-stitch_deliverables/
+token-usage-output.txt
+backend/Untitled-1.txt
+
+# ─── App-specific ─────────────────────────────────────────────
+backend/db/pitch_memory.db
+backend/data/*.db
+backend/data/*.sqlite
+backend/data/*.sqlite3
+frontend/public/charts/
+apps/api/data/*.db
+apps/api/data/*.sqlite
+apps/api/data/*.sqlite3
+
+# ─── Tier 0 reorganization ───────────────────────────────────
+# During the monorepo migration (Tier 0a → 0b → 0c), the existing
+# backend/ and frontend/ directories are still where the code lives.
+# They will be moved to apps/api/ and apps/web/ in a follow-up PR.
+# The new monorepo tooling (apps/, packages/, turbo.json) is being
+# introduced alongside, not replacing.
+#
+# Once the migration is complete, the lines below will be uncommented:
+#   backend/
+#   frontend/
+
+# ─── Tier 0d placeholder: monorepo scratch ───────────────────
+.turbo/

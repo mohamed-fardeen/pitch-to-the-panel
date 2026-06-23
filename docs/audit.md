@@ -1,4 +1,10 @@
-# Pitch to the Panel - Codebase Audit Findings
+# PanelMind — Codebase Audit Findings (historical)
+
+> **Note**: This is a snapshot of an audit run against the pre-rebrand codebase
+> ("Pitch to the Panel"). It is kept here for historical reference. Most of the
+> Tier 0 ship-blockers derived from this audit have been addressed — see
+> [CHANGELOG.md](../CHANGELOG.md) for current status. The follow-up
+> transformation plan is in the [parent project's plan file](../).
 
 ## 1. Architectural & State Conflicts
 

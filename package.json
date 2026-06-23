@@ -1,0 +1,25 @@
+{
+  "name": "panelmind",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PanelMind — open-source, multi-agent pitch evaluation platform. Adversarial feedback from synthetic VCs, designers, and operators before you talk to a real one.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.3",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  }
+}
