@@ -12,9 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Monorepo structure: `apps/web`, `apps/api`, `packages/shared`
 - New top-level README, LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY
 - Real landing page replacing mock UI (Tier 0a)
+- Persistence layer: SQLAlchemy 2.0 async models, `SessionRepository`
+  abstraction, `InMemorySessionRepository` (default), and
+  `SqlAlchemySessionRepository` (production) (Tier 0b)
+- `pytest.ini` and 60 pytest tests covering both repository implementations,
+  the legacy `sanitize_pitch_input`, the legacy `extract_json`, and the
+  legacy `VerdictSchema` (Tier 0b)
 
 ### Changed
-- *(none yet)*
+- **Security**: rewrote the `sanitize_pitch_input` injection-pattern regexes
+  to actually match multi-word variants like "ignore all previous
+  instructions" (the old regex required `instructions` to immediately
+  follow `ignore`). Adds matches for `disregard`, `act as`, `pretend to be`,
+  ChatML markers, and Anthropic-style im_start/im_end tokens.
 
 ### Deprecated
 - *(none yet)*
@@ -24,10 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Material Symbols + emoji mix (replaced with consistent icon set in later tiers)
 
 ### Fixed
-- *(none yet)*
+- **Security**: `sanitize_pitch_input` regex bug — the original pattern
+  `r'ignore (all |previous |above )?instructions?'` only matched when
+  `instructions` immediately followed `ignore`, missing real-world
+  injection attempts like "ignore all previous instructions and…".
 
 ### Security
-- *(none yet)*
+- See "Changed" + "Fixed" above for the sanitizer hardening.
+- The new persistence layer uses parameterized SQL throughout (no
+  string interpolation in queries).
 
 ---
 

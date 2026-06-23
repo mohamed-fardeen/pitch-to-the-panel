@@ -34,33 +34,48 @@ import re
 def sanitize_pitch_input(text: str) -> str:
     """
     Cleans user pitch input before it enters any prompt.
+
     - Strips HTML tags
     - Removes prompt injection patterns
     - Normalizes whitespace
     - Truncates to safe length
+
+    Note: this is best-effort sanitization, not a security boundary. Never
+    rely on it for actual safety — always run user input through a
+    secondary validation layer before letting it near sensitive tools.
     """
     if not text or not isinstance(text, str):
         raise ValueError("Pitch must be a non-empty string")
 
     # Strip HTML tags
-    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r"<[^>]+>", "", text)
 
-    # Remove common prompt injection patterns
+    # Remove common prompt injection patterns.
+    # Each pattern is matched case-insensitively and replaced with [removed].
     injection_patterns = [
-        r'ignore (all |previous |above )?instructions?',
-        r'you are now',
-        r'new persona',
-        r'forget (everything|all)',
-        r'system prompt',
-        r'\\n\\n(human|assistant|system):',
-        r'<|im_start|>',
-        r'<|im_end|>',
+        # Direct instruction overrides — match "ignore" followed by anything
+        # up to 3 intervening words before "instructions".
+        r"ignore\s+(?:[\w]+\s+){0,3}instructions?",
+        r"disregard\s+(?:[\w]+\s+){0,3}instructions?",
+        r"forget\s+(?:[\w]+\s+){0,3}(?:everything|all|instructions?)",
+        # Persona-override attempts
+        r"you are now",
+        r"new persona",
+        r"act as",
+        r"pretend to be",
+        # System-prompt markers
+        r"system prompt",
+        r"###\s*instructions",
+        # ChatML / Anthropic-style markers
+        r"\\n\\n(human|assistant|system):",
+        r"<\|im_start\|>",
+        r"<\|im_end\|>",
     ]
     for pattern in injection_patterns:
-        text = re.sub(pattern, '[removed]', text, flags=re.IGNORECASE)
+        text = re.sub(pattern, "[removed]", text, flags=re.IGNORECASE)
 
     # Normalize whitespace
-    text = re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
 
     # Truncate to 1500 characters — enough for any real pitch
     if len(text) > 1500:
