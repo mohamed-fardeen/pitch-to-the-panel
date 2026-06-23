@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 import json
 import asyncio
+import logging
 
 from orchestrator import (
     sessions,
@@ -17,8 +18,27 @@ from orchestrator import (
     AGENTS_CONFIG
 )
 from services.llm import llm_provider
+from persistence import get_repository
+from persistence.sync import SessionPersistenceBridge
+from persistence.models import VerdictSignal
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+# Persistence bridge (Tier 0c). Mirrors writes to the legacy `sessions`
+# dict into the durable SessionRepository. Defaults to the in-memory
+# implementation, which means the bridge is effectively a no-op in dev.
+# Set PANELMIND_REPOSITORY=sqlalchemy to enable durable storage.
+_persistence_bridge: SessionPersistenceBridge | None = None
+
+
+def _bridge() -> SessionPersistenceBridge:
+    """Lazy accessor so tests can swap the repository before the first call."""
+    global _persistence_bridge
+    if _persistence_bridge is None:
+        _persistence_bridge = SessionPersistenceBridge(get_repository())
+    return _persistence_bridge
 
 
 app.add_middleware(
@@ -28,6 +48,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ─── Lifecycle hooks (Tier 0c) ─────────────────────────────────────
+# On startup we initialise the persistence layer. On shutdown we close
+# any open DB connections cleanly. Both are no-ops for the in-memory
+# repository.
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    try:
+        from persistence import init_repository_schema
+        await init_repository_schema()
+        logger.info("Persistence schema ready.")
+    except Exception as e:
+        # Don't crash the app if the DB is unavailable in dev — log and
+        # continue. Production deployments should fail fast at this step.
+        logger.warning("Persistence schema init skipped: %s", e)
+    yield
+    # Shutdown
+    try:
+        from persistence.database import dispose_engine
+        await dispose_engine()
+    except Exception as e:
+        logger.warning("Engine dispose skipped: %s", e)
+
+
+# Replace the default lifespan handler. We assign explicitly so we don't
+# lose the CORS middleware behavior.
+app.router.lifespan_context = lifespan
 
 import re
 
@@ -300,6 +352,21 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
             "awaiting_user_input": False,
             "refined_pitch": ""
         }
+        # Tier 0c: mirror the new session into the durable repository.
+        # Fire-and-forget — failures are logged but never block the request.
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(_bridge().session_created(
+                session_id=session_id,
+                pitch=pitch,
+                mode=mode,
+                provider=provider,
+                aggressiveness=aggressiveness,
+            ))
+        except RuntimeError:
+            # No running loop (shouldn't happen in a FastAPI handler, but
+            # be defensive). The in-process cache still works.
+            pass
     
     async def event_generator():
         try:

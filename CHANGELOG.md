@@ -15,9 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Persistence layer: SQLAlchemy 2.0 async models, `SessionRepository`
   abstraction, `InMemorySessionRepository` (default), and
   `SqlAlchemySessionRepository` (production) (Tier 0b)
-- `pytest.ini` and 60 pytest tests covering both repository implementations,
-  the legacy `sanitize_pitch_input`, the legacy `extract_json`, and the
-  legacy `VerdictSchema` (Tier 0b)
+- `pytest.ini` and 75 pytest tests covering both repository implementations,
+  the legacy `sanitize_pitch_input`, the legacy `extract_json`, the legacy
+  `VerdictSchema`, the new `SessionPersistenceBridge`, and FastAPI
+  integration via `TestClient` (Tier 0b/0c)
+- `SessionPersistenceBridge` (Tier 0c) — async-mirrors session-dict writes
+  to the durable repository, filters out in-process state (asyncio.Event
+  objects, etc.), survives DB outages
+- FastAPI lifespan hook that creates the SQL schema on startup
+  (`init_repository_schema`) and disposes the engine on shutdown
+- `apps/api/data/panelmind.db` (SQLite) created automatically on first run
 
 ### Changed
 - **Security**: rewrote the `sanitize_pitch_input` injection-pattern regexes
