@@ -97,6 +97,21 @@ async def lifespan(app: FastAPI):
         # Don't crash the app if the DB is unavailable in dev — log and
         # continue. Production deployments should fail fast at this step.
         logger.warning("Persistence schema init skipped: %s", e)
+    # Tier 1a: Langfuse LLM tracing (no-op in dev)
+    try:
+        from backend.observability import is_tracing_enabled
+        if is_tracing_enabled():
+            logger.info("Langfuse tracing ENABLED.")
+        else:
+            logger.info("Langfuse tracing disabled (no LANGFUSE_PUBLIC_KEY set).")
+    except Exception:
+        pass
+    # Tier 1b: Sentry error tracking (no-op in dev)
+    try:
+        from backend.observability import init_sentry
+        init_sentry()
+    except Exception as e:
+        logger.warning("Sentry init skipped: %s", e)
     yield
     # Shutdown
     try:
@@ -104,6 +119,11 @@ async def lifespan(app: FastAPI):
         await dispose_engine()
     except Exception as e:
         logger.warning("Engine dispose skipped: %s", e)
+    try:
+        from backend.observability import flush_traces
+        flush_traces()
+    except Exception as e:
+        logger.debug("Trace flush skipped: %s", e)
 
 
 # Replace the default lifespan handler. We assign explicitly so we don't

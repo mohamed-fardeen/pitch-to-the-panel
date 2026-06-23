@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Langfuse LLM observability** (Tier-1a): every LLM call is traced
+  with input/output/latency/fallback metadata. Opt-in via
+  `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` + `LANGFUSE_HOST`. In
+  dev, the trace context manager is a zero-cost no-op.
+- **Sentry error tracking** (Tier-1b): FastAPI + Next.js integration.
+  Server-side via `sentry-sdk[fastapi]`, client/server split for the
+  web app via `@sentry/nextjs`. Opt-in via `SENTRY_DSN` (server) and
+  `NEXT_PUBLIC_SENTRY_DSN` (client).
+
+### Added (Tier 0)
 - Rebrand from "Pitch to the Panel" to **PanelMind**
 - Monorepo structure: `apps/web`, `apps/api`, `packages/shared`
 - New top-level README, LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY

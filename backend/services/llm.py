@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import logging
 import httpx
 from typing import AsyncGenerator
 from google import genai as google_genai
@@ -9,7 +10,10 @@ from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
+from backend.observability import trace_llm_call
+
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 class LLMProvider:
     def __init__(self):
@@ -19,7 +23,7 @@ class LLMProvider:
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
         self.anthropic_client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY")) if os.getenv("ANTHROPIC_API_KEY") else None
-        
+
         gemini_api_key = os.getenv("GEMINI_API_KEY")
         if gemini_api_key:
             self.gemini_client = google_genai.Client(api_key=gemini_api_key)
@@ -30,6 +34,19 @@ class LLMProvider:
 
         self.openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")) if os.getenv("OPENAI_API_KEY") else None
         self.groq_client = AsyncOpenAI(api_key=os.getenv("GROQ_API_KEY"), base_url="https://api.groq.com/openai/v1") if os.getenv("GROQ_API_KEY") else None
+
+    @staticmethod
+    def _model_for_provider(provider: str) -> str:
+        """Best-effort model name for a provider. Used for tracing."""
+        if provider == "anthropic":
+            return "claude-3-5-sonnet-latest"
+        if provider == "openai":
+            return "gpt-4o"
+        if provider == "gemini":
+            return "gemini-1.5-pro"
+        if provider == "groq":
+            return "llama-3.1-8b-instant"
+        return "llama3.2"  # ollama default
 
     async def generate_response(self, system_prompt: str, user_prompt: str, provider: str = "ollama", stream: bool = False, max_tokens: int = 1024) -> str | AsyncGenerator[str, None]:
         if not provider:
@@ -46,21 +63,58 @@ class LLMProvider:
         else: # default ollama
             provider_chain.extend(["groq", "gemini"])
 
-        for fallback_provider in provider_chain:
-            try:
-                # FIXED: Return the result inside the loop so we don't try fallbacks on success
-                result = await self._generate_response_internal(system_prompt, user_prompt, fallback_provider, stream, max_tokens)
-                return result
-            except Exception as e:
-                print(f"[LLM ERROR] Provider '{fallback_provider}' failed: {e}")
-                # continue to next fallback
-        
-        # If all fail:
-        if stream:
-            async def fallback_stream():
-                yield "I'm sorry, my systems are currently unavailable. Please check your API keys or local server."
-            return fallback_stream()
-        return "I'm sorry, my systems are currently unavailable. Please check your API keys or local server."
+        # Trace this LLM call. The context manager is a no-op when
+        # Langfuse is not configured, so this is zero-cost in dev.
+        with trace_llm_call(
+            name="llm.generate_response",
+            provider=provider,
+            model=self._model_for_provider(provider),
+            metadata={
+                "stream": stream,
+                "max_tokens": max_tokens,
+                "fallback_chain": provider_chain,
+                "system_prompt_chars": len(system_prompt),
+                "user_prompt_chars": len(user_prompt),
+            },
+            input_data={
+                "system_prompt": system_prompt[:500] + ("..." if len(system_prompt) > 500 else ""),
+                "user_prompt": user_prompt[:500] + ("..." if len(user_prompt) > 500 else ""),
+            },
+        ) as trace:
+            for fallback_provider in provider_chain:
+                try:
+                    result = await self._generate_response_internal(
+                        system_prompt, user_prompt, fallback_provider, stream, max_tokens
+                    )
+                    # If streaming, we can't easily update the trace
+                    # with the final output (it's an async generator).
+                    # For non-stream, we capture the full text.
+                    if not stream and isinstance(result, str):
+                        trace.update(
+                            output=result[:2000] + ("..." if len(result) > 2000 else ""),
+                            metadata={
+                                "fallback_used": fallback_provider,
+                                "output_chars": len(result),
+                            },
+                        )
+                    else:
+                        trace.update(
+                            metadata={"fallback_used": fallback_provider, "streamed": True},
+                        )
+                    return result
+                except Exception as e:
+                    logger.warning(
+                        "LLM provider %r failed: %s", fallback_provider, e,
+                    )
+                    # continue to next fallback
+
+            # All providers failed
+            trace.update(status="error", error="all providers failed")
+            if stream:
+                async def fallback_stream():
+                    yield "I'm sorry, my systems are currently unavailable. Please check your API keys or local server."
+                return fallback_stream()
+            return "I'm sorry, my systems are currently unavailable. Please check your API keys or local server."
 
     async def _generate_response_internal(self, system_prompt: str, user_prompt: str, provider: str = "ollama", stream: bool = False, max_tokens: int = 1024) -> str | AsyncGenerator[str, None]:
         if provider == "anthropic":
