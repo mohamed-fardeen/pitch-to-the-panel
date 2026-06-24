@@ -1,0 +1,23 @@
+{
+  "name": "b2b_saas",
+  "description": "B2B SaaS — solid metrics, strong team.",
+  "pitch_summary": "Notifi is a B2B SaaS platform for IT operations teams to centralize on-call alerting and incident response. We integrate with PagerDuty, Datadog, and Slack. We're SOC2 Type II compliant and have 47 enterprise customers including two Fortune 500 companies. ARR is $1.8M growing 22% quarter-over-quarter with 92% net dollar retention. Our team has 11 engineers with prior experience at PagerDuty, Datadog, and AWS.",
+  "mode": "venture",
+  "provider": "groq",
+  "expectations": {
+    "verdict_schema": {
+      "strongest_point": {"type": "string", "min_length": 10, "max_length": 1000},
+      "biggest_weakness": {"type": "string", "min_length": 10, "max_length": 1000},
+      "fix_before_next_pitch": {"type": "string", "min_length": 10, "max_length": 1000},
+      "investment_score": {"type": "number", "min": 0, "max": 10},
+      "recommendation": {"type": "string", "min_length": 1, "max_length": 100}
+    },
+    "verdict_contains_keywords": [
+      "ARR",
+      "retention"
+    ],
+    "investment_score_range": [6, 10],
+    "min_risks": 1,
+    "min_strengths": 2
+  }
+}

@@ -40,6 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   English-to-English is a passthrough (no LLM call). Errors fall
   back to the original text with model='fallback'. `GET /api/languages`
   returns the supported language catalog.
+- **Eval suite + golden transcripts** (Tier-2a): prompt regression
+  testing. `tests/evals/golden_transcripts/*.json` are 4 sample
+  pitches across the 3 modes with expected verdict shape, score
+  ranges, and keyword presence. The eval suite (14 tests) verifies
+  every transcript produces a well-formed verdict. Runs against a
+  deterministic mock by default; set `PANELMIND_EVAL_REAL_LLM=1` to
+  run against the real LLM provider. Catches prompt regressions in CI.
 
 ### Fixed
 - **Module duplication**: `backend/main.py` was importing
