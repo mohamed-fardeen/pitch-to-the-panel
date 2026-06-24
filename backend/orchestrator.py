@@ -389,7 +389,7 @@ async def pitch_refiner_node(state: FocusGroupState):
 
         # Phase 3: Retrieve past pitches for historical context injection
         try:
-            from services.db import retrieve_past_pitches, format_past_pitches_for_context
+            from backend.services.embeddings import retrieve_past_pitches, format_past_pitches_for_context
             past = await retrieve_past_pitches(refined, top_k=2)
             if past:
                 history_context = format_past_pitches_for_context(past)
@@ -1207,7 +1207,7 @@ async def final_node(state: FocusGroupState):
 
         # Phase 3: Persist pitch to vector DB (fire-and-forget)
         try:
-            from services.db import save_pitch_history
+            from backend.services.embeddings import save_pitch_history
             asyncio.create_task(save_pitch_history(
                 session_id=state["session_id"],
                 pitch_summary=state.get("pitch_summary", ""),

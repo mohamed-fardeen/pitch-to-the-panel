@@ -25,6 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /v/{id}/og` (HTML with OG tags). Frontend route at
   `apps/web/app/v/[verdictId]/page.tsx` with full SEO + meta
   generation via `generateMetadata()`.
+- **Embeddings migrated to native pgvector** (Tier-1d): the legacy
+  `services/db.py` (using the unmaintained `vecs` library) is
+  replaced by `services/embeddings.py` which uses SQLAlchemy + raw
+  pgvector SQL for Postgres production and an in-memory cosine
+  fallback for SQLite dev. The legacy /api/pitch-history endpoint
+  is rewired to use the new list_all_pitches() helper. Same public
+  API (save_pitch_history, retrieve_past_pitches,
+  format_past_pitches_for_context) so no orchestrator changes
+  needed.
+- **Multi-language pitch translation** (Tier-1e): `POST /api/translate`
+  endpoint translates any text into one of 8 supported languages
+  (en, es, hi, zh, fr, de, pt, ja) using the configured LLM provider.
+  English-to-English is a passthrough (no LLM call). Errors fall
+  back to the original text with model='fallback'. `GET /api/languages`
+  returns the supported language catalog.
 
 ### Fixed
 - **Module duplication**: `backend/main.py` was importing

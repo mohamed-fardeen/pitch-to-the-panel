@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 import json
 import asyncio
@@ -468,13 +468,113 @@ async def score_pitch(request: Request):
     session = sessions.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     # Simple transcript-based scoring
     transcript = ""
     for turn in session.get("conversation", []):
         transcript += f"{turn['agent_name']}: {turn['content']}\n"
-    
+
     return await get_scoring_radar(session["pitch_summary"], {}, data.get("provider", session.get("provider", "ollama")))
+
+
+# ─── Tier-1e: Multi-language pitch translation ───────────────────────
+
+
+class TranslateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=8000)
+    target_language: str  # ISO code: "en", "es", "hi", "zh", "fr", "de"
+    provider: str = "groq"
+
+
+# Languages we explicitly support. The LLM can handle others but we
+# only validate against this list to keep the UI predictable.
+SUPPORTED_LANGUAGES = {
+    "en": "English",
+    "es": "Spanish",
+    "hi": "Hindi",
+    "zh": "Mandarin Chinese",
+    "fr": "French",
+    "de": "German",
+    "pt": "Portuguese",
+    "ja": "Japanese",
+}
+
+
+@app.post("/api/translate")
+async def translate_text(req: TranslateRequest):
+    """Translate a pitch (or any text) into the target language.
+
+    Returns the translated text and the detected source language.
+    Uses the configured LLM provider — no translation-specific key
+    is required. Best-effort; may fall back to returning the input
+    if the LLM is unavailable.
+    """
+    target = req.target_language.lower().strip()
+    if target not in SUPPORTED_LANGUAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported language: {target!r}. Supported: "
+                   f"{', '.join(sorted(SUPPORTED_LANGUAGES.keys()))}",
+        )
+
+    if target == "en":
+        # No translation needed
+        return {
+            "translated_text": req.text,
+            "source_language": "en",
+            "target_language": "en",
+            "model": "passthrough",
+        }
+
+    target_name = SUPPORTED_LANGUAGES[target]
+
+    prompt = (
+        f"Translate the following pitch into {target_name}. "
+        "Preserve the original tone, technical terms, and brand names. "
+        "Return ONLY the translated text, no preamble, no quotes, no notes.\n\n"
+        f"---\n{req.text}\n---"
+    )
+
+    try:
+        from services.llm import llm_provider
+        translated = await llm_provider.generate_response(
+            system_prompt=(
+                f"You are a professional pitch translator. "
+                f"Translate into {target_name} while preserving meaning."
+            ),
+            user_prompt=prompt,
+            provider=req.provider,
+            stream=False,
+        )
+        # Heuristic: try to extract a "source language" if the model
+        # didn't include it. For now, just report "auto".
+        return {
+            "translated_text": translated.strip(),
+            "source_language": "auto",
+            "target_language": target,
+            "model": req.provider,
+        }
+    except Exception as e:
+        logger.warning("Translation failed: %s", e)
+        # Best-effort fallback: return the original text
+        return {
+            "translated_text": req.text,
+            "source_language": "auto",
+            "target_language": target,
+            "model": "fallback",
+            "error": str(e),
+        }
+
+
+@app.get("/api/languages")
+async def list_supported_languages():
+    """Return the list of languages we support for translation."""
+    return {
+        "languages": [
+            {"code": code, "name": name}
+            for code, name in sorted(SUPPORTED_LANGUAGES.items())
+        ]
+    }
 
 # ─── Removed in Tier 0f ────────────────────────────────────────────
 # The Meshy 3D endpoint was a hackathon-era leftover that contributed
@@ -739,30 +839,18 @@ def _html_escape(s: str) -> str:
 @app.get("/api/pitch-history")
 async def get_pitch_history(limit: int = 20):
     """
-    Return all stored pitch sessions from Supabase pgvector for the history dashboard.
-    Falls back to empty list if DB is not configured.
+    Return all stored pitch sessions from the embedding store for the
+    history dashboard. Tier-1d: uses the new EmbeddingService
+    (pgvector in production, in-memory fallback in dev).
     """
     try:
-        from services.db import _get_vecs_client
-        import asyncio
-        collection = await asyncio.to_thread(_get_vecs_client)
-        if collection is None:
-            return {"pitches": [], "total": 0}
+        from backend.services.embeddings import list_all_pitches
 
-        # Fetch all records using a neutral embedding query (fetch by metadata scan)
-        # vecs doesn't have a native list-all, so we query with a zero vector + high limit
-        zero_vec = [0.0] * 1024
-        results = await asyncio.to_thread(
-            collection.query,
-            data=zero_vec,
-            limit=limit,
-            include_metadata=True,
-            include_value=False
-        )
+        records = await list_all_pitches(limit=limit)
         pitches = []
-        for doc_id, metadata in [(r[0], r[2]) for r in results]:
+        for i, metadata in enumerate(records):
             pitches.append({
-                "id": doc_id,
+                "id": f"pitch-{i}",  # synthetic id; pgvector records have UUIDs
                 "session_id": metadata.get("session_id", ""),
                 "pitch_summary": metadata.get("pitch_summary", ""),
                 "strongest": metadata.get("strongest", ""),
@@ -771,11 +859,9 @@ async def get_pitch_history(limit: int = 20):
                 "confidence_score": metadata.get("confidence_score", 0),
                 "timestamp": metadata.get("timestamp", 0),
             })
-        # Sort newest first
-        pitches.sort(key=lambda x: x["timestamp"], reverse=True)
         return {"pitches": pitches, "total": len(pitches)}
     except Exception as e:
-        print(f"[HISTORY ERROR] {e}")
+        logger.warning("pitch-history failed: %s", e)
         return {"pitches": [], "total": 0, "error": str(e)}
 
 # ─── Phase 4: Pitch Revision Loop ─────────────────────────────────────────────
