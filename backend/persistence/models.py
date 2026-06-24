@@ -191,6 +191,10 @@ class PitchSession(Base):
     is_cancelled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_force_ended: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Privacy (Tier-1c). When true, the verdict is publicly shareable
+    # at /v/<session_id>. When false, the verdict is owner-only.
+    is_public: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
     # Domain classification (filled in by the orchestrator)
     domain: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     active_panel: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)

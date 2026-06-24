@@ -28,8 +28,14 @@ import pytest
 #
 # The new code in `backend/persistence/` uses absolute imports
 # (`from backend.persistence.repository import ...`) so it works
-# without this. The legacy tests need both: backend/ on path so the
-# legacy modules import, AND project root so `backend.*` resolves.
+# without this.
+#
+# IMPORTANT: This dual setup creates a *module duplication* problem —
+# `persistence` (bare) and `backend.persistence` (absolute) are two
+# different module objects with separate module-level state (e.g. the
+# factory's `_default_repo` global). Tests should prefer the absolute
+# import path (`from backend.persistence import ...`) to ensure they
+# share state with the production code.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BACKEND_DIR = PROJECT_ROOT / "backend"
 for path in (PROJECT_ROOT, BACKEND_DIR):

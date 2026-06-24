@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 import json
@@ -18,9 +19,9 @@ from orchestrator import (
     AGENTS_CONFIG
 )
 from services.llm import llm_provider
-from persistence import get_repository
-from persistence.sync import SessionPersistenceBridge
-from persistence.models import VerdictSignal
+from backend.persistence import get_repository
+from backend.persistence.sync import SessionPersistenceBridge
+from backend.persistence.models import VerdictSignal
 from rate_limit import install_rate_limiter
 
 # ─── Logging configuration (Tier 0f) ─────────────────────────────
@@ -90,7 +91,7 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     try:
-        from persistence import init_repository_schema
+        from backend.persistence import init_repository_schema
         await init_repository_schema()
         logger.info("Persistence schema ready.")
     except Exception as e:
@@ -115,7 +116,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     try:
-        from persistence.database import dispose_engine
+        from backend.persistence.database import dispose_engine
         await dispose_engine()
     except Exception as e:
         logger.warning("Engine dispose skipped: %s", e)
@@ -598,6 +599,140 @@ async def get_report_pdf(session_id: str):
     except Exception as e:
         print(f"[PDF ERROR] {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {str(e)}")
+
+# ─── Tier-1c: Public Verdict Pages ─────────────────────────────────────
+# Anyone with a session_id can fetch a sanitized JSON representation
+# of the verdict for the /v/[id] shareable page. We strip the full
+# pitch content (which may contain private info) and return only the
+# structured verdict + a redacted summary. The session must be marked
+# is_public=true to be visible to non-owners.
+
+
+class PublicVerdictResponse(BaseModel):
+    """Response shape for /v/<session_id>/public. Safe to expose."""
+    session_id: str
+    is_public: bool
+    mode: str
+    created_at: str
+    # Sanitized — full pitch may contain private info, so we omit it
+    # unless explicitly opted-in (Tier 2)
+    pitch_excerpt: str  # first 200 chars only
+    verdict: dict
+    confidence_score: int
+    investment_signal: str
+
+
+@app.get("/v/{session_id}/public", response_model=PublicVerdictResponse)
+async def get_public_verdict(session_id: str):
+    """
+    Return a sanitized, public-safe representation of a verdict.
+
+    Used by the /v/[id] shareable page in the web app. The session
+    must be marked is_public=true (default) to be visible.
+
+    Returns 404 if the session doesn't exist or is private.
+    """
+    repo = get_repository()
+    session = await repo.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Verdict not found")
+    if not session.is_public:
+        raise HTTPException(status_code=404, detail="Verdict not found")
+    if session.status != "completed":
+        raise HTTPException(status_code=404, detail="Verdict not ready")
+
+    verdict = await repo.get_verdict(session_id)
+    if verdict is None:
+        raise HTTPException(status_code=404, detail="Verdict not yet generated")
+
+    # Truncate the pitch excerpt to the first 200 chars to avoid leaking
+    # the founder's full pitch to non-owners.
+    pitch_excerpt = (session.pitch_summary or "")[:200]
+    if len(session.pitch_summary or "") > 200:
+        pitch_excerpt += "..."
+
+    return PublicVerdictResponse(
+        session_id=session_id,
+        is_public=session.is_public,
+        mode=session.mode,
+        created_at=session.created_at.isoformat() if session.created_at else "",
+        pitch_excerpt=pitch_excerpt,
+        verdict={
+            "strongest": verdict.strongest or "",
+            "weakness": verdict.weakness or "",
+            "fix": verdict.fix or "",
+            "recommendation": verdict.recommendation or "",
+            "investment_score": verdict.investment_score,
+            "verdict_text": (verdict.verdict_text or "")[:1000],
+        },
+        confidence_score=verdict.confidence_score,
+        investment_signal=verdict.signal or "MEDIUM",
+    )
+
+
+@app.get("/v/{session_id}/og")
+async def get_verdict_og_tags(session_id: str):
+    """
+    Return OG meta tags as HTML for the public verdict page.
+
+    Used by social-media crawlers (Twitter, LinkedIn, etc.) to
+    generate rich previews. The frontend /v/[id] page also includes
+    these tags in its own <head>.
+    """
+    repo = get_repository()
+    session = await repo.get_session(session_id)
+    if session is None or not session.is_public or session.status != "completed":
+        # Return a generic 404 page (crawlers handle 404s gracefully)
+        raise HTTPException(status_code=404, detail="Verdict not found")
+
+    verdict = await repo.get_verdict(session_id)
+    if verdict is None:
+        raise HTTPException(status_code=404, detail="Verdict not found")
+
+    title = f"PanelMind Verdict: {verdict.signal or 'MEDIUM'} ({verdict.confidence_score}/100)"
+    description = (verdict.strongest or verdict.verdict_text or "PanelMind verdict")[:200]
+    base_url = os.getenv("NEXTAUTH_URL", "http://localhost:3000").rstrip("/")
+    url = f"{base_url}/v/{session_id}"
+
+    # Minimal HTML with just the meta tags — crawlers only read <head>
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{title}</title>
+  <meta name="description" content="{_html_escape(description)}">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="{_html_escape(title)}">
+  <meta property="og:description" content="{_html_escape(description)}">
+  <meta property="og:url" content="{url}">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="PanelMind">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{_html_escape(title)}">
+  <meta name="twitter:description" content="{_html_escape(description)}">
+
+  <!-- Redirect to the real page (for human visitors) -->
+  <meta http-equiv="refresh" content="0;url={url}">
+</head>
+<body>
+  <p>Redirecting to <a href="{url}">{_html_escape(url)}</a></p>
+</body>
+</html>"""
+    return HTMLResponse(content=html, media_type="text/html")
+
+
+def _html_escape(s: str) -> str:
+    """Minimal HTML escape for OG meta content."""
+    return (
+        s.replace("&", "&amp;")
+         .replace("<", "&lt;")
+         .replace(">", "&gt;")
+         .replace('"', "&quot;")
+    )
+
 
 # ─── Pitch History Dashboard ──────────────────────────────────────────────────
 

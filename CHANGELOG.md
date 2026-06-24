@@ -16,6 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Server-side via `sentry-sdk[fastapi]`, client/server split for the
   web app via `@sentry/nextjs`. Opt-in via `SENTRY_DSN` (server) and
   `NEXT_PUBLIC_SENTRY_DSN` (client).
+- **Public verdict pages /v/[verdictId]** (Tier-1c): server-rendered
+  shareable page for any public verdict. Includes OG meta tags for
+  Twitter/LinkedIn previews. Pitch content is truncated to 200 chars
+  to prevent leaking the founder's full pitch. Per-session
+  `is_public` flag on `PitchSession` (default `true`). Backend
+  endpoints: `GET /v/{id}/public` (sanitized JSON) and
+  `GET /v/{id}/og` (HTML with OG tags). Frontend route at
+  `apps/web/app/v/[verdictId]/page.tsx` with full SEO + meta
+  generation via `generateMetadata()`.
+
+### Fixed
+- **Module duplication**: `backend/main.py` was importing
+  `persistence` (bare) while tests used `backend.persistence`
+  (absolute). These are two distinct module objects with separate
+  module-level state, causing test fixtures' `set_repository()` to
+  silently fail. Switched `main.py` to absolute imports throughout.
 
 ### Added (Tier 0)
 - Rebrand from "Pitch to the Panel" to **PanelMind**
