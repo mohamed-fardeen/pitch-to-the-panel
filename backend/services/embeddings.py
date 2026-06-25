@@ -132,7 +132,7 @@ async def _ensure_pgvector_table() -> bool:
         return False
 
     try:
-        from backend.persistence.database import get_engine
+        from persistence.database import get_engine
 
         engine = get_engine()
         async with engine.begin() as conn:
@@ -215,7 +215,7 @@ async def _save_to_pgvector(
 ) -> None:
     """Persist a single embedding to pgvector."""
     try:
-        from backend.persistence.database import get_sessionmaker
+        from persistence.database import get_sessionmaker
         from sqlalchemy import text
 
         Session = get_sessionmaker()
@@ -274,7 +274,7 @@ async def _retrieve_from_pgvector(
 ) -> list[dict[str, Any]]:
     """Cosine-similarity search against pgvector."""
     try:
-        from backend.persistence.database import get_sessionmaker
+        from persistence.database import get_sessionmaker
         from sqlalchemy import text
 
         vec_str = "[" + ",".join(str(float(x)) for x in embedding) + "]"
@@ -359,7 +359,7 @@ async def list_all_pitches(limit: int = 20) -> list[dict[str, Any]]:
 
 async def _list_all_from_pgvector(limit: int) -> list[dict[str, Any]]:
     try:
-        from backend.persistence.database import get_sessionmaker
+        from persistence.database import get_sessionmaker
         from sqlalchemy import text
 
         Session = get_sessionmaker()

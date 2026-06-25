@@ -335,3 +335,60 @@ class PitchRevision(Base):
 
     # Relationships
     session: Mapped["PitchSession"] = relationship(back_populates="revisions")
+
+
+# ─── API Keys (Tier-2b) ────────────────────────────────────────────
+
+
+class ApiKey(Base):
+    """An API key for accessing the public REST API.
+
+    Keys are stored as hashes; the raw value is shown to the user
+    only once at creation time. Owners can revoke keys, which sets
+    `revoked_at` and rejects all future requests.
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+
+    # Display info
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    # First 8 chars of the raw key (after the prefix), for display:
+    # e.g. "pm_live_abcd1234"
+    key_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # Permissions / scoping
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # Whether this key is currently active. Revoked keys fail auth.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Rate limit overrides (per-key, in requests per minute).
+    # None means "use the default".
+    rate_limit_per_minute: Mapped[Optional[int]] = mapped_column(nullable=True)
+
+    # Usage tracking
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    total_requests: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Lifecycle
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+    def to_dict(self, include_hash: bool = False) -> dict[str, Any]:
+        d = super().to_dict()
+        if not include_hash:
+            d.pop("key_hash", None)
+        return d
+
+
+# Update SessionRepository to know about API keys (Tier-2b)
+# We extend the existing SessionRepository interface with API-key methods.
+from .repository import SessionRepository  # noqa: E402  (circular-safe import at module level)

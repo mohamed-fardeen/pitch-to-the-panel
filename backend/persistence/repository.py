@@ -24,10 +24,14 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from .models import ApiKey
 
 from .models import (
     AgentPersona,
+    ApiKey,
     PitchRevision,
     PitchSession,
     PitchTurn,
@@ -225,6 +229,38 @@ class SessionRepository(ABC):
     @abstractmethod
     def get_events(self, session_id: str) -> SessionEventBus:
         """Return the asyncio event bus for a session. Created lazily."""
+
+    # ─── API Keys (Tier-2b) ─────────────────────────────────────
+
+    @abstractmethod
+    async def create_api_key(
+        self,
+        *,
+        name: str,
+        key_hash: str,
+        key_prefix: str,
+        user_id: Optional[str] = None,
+        scopes: Optional[list[str]] = None,
+        expires_at: Optional[Any] = None,
+        rate_limit_per_minute: Optional[int] = None,
+    ) -> "ApiKey":
+        """Create a new API key. Returns the row."""
+
+    @abstractmethod
+    async def get_api_key_by_hash(self, key_hash: str) -> Optional["ApiKey"]:
+        """Look up an API key by its hash. Returns None if not found or revoked."""
+
+    @abstractmethod
+    async def list_api_keys(self, user_id: Optional[str] = None) -> list["ApiKey"]:
+        """List API keys. If user_id is set, filter to that user."""
+
+    @abstractmethod
+    async def revoke_api_key(self, key_id: str) -> bool:
+        """Revoke an API key. Returns True if the key was found and revoked."""
+
+    @abstractmethod
+    async def record_api_key_usage(self, key_id: str) -> None:
+        """Increment usage counters for an API key."""
 
     # ─── Convenience ─────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -19,9 +19,9 @@ from orchestrator import (
     AGENTS_CONFIG
 )
 from services.llm import llm_provider
-from backend.persistence import get_repository
-from backend.persistence.sync import SessionPersistenceBridge
-from backend.persistence.models import VerdictSignal
+from persistence import get_repository
+from persistence.sync import SessionPersistenceBridge
+from persistence.models import ApiKey, VerdictSignal
 from rate_limit import install_rate_limiter
 
 # ─── Logging configuration (Tier 0f) ─────────────────────────────
@@ -91,7 +91,7 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     try:
-        from backend.persistence import init_repository_schema
+        from persistence import init_repository_schema
         await init_repository_schema()
         logger.info("Persistence schema ready.")
     except Exception as e:
@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
         logger.warning("Persistence schema init skipped: %s", e)
     # Tier 1a: Langfuse LLM tracing (no-op in dev)
     try:
-        from backend.observability import is_tracing_enabled
+        from observability import is_tracing_enabled
         if is_tracing_enabled():
             logger.info("Langfuse tracing ENABLED.")
         else:
@@ -109,19 +109,19 @@ async def lifespan(app: FastAPI):
         pass
     # Tier 1b: Sentry error tracking (no-op in dev)
     try:
-        from backend.observability import init_sentry
+        from observability import init_sentry
         init_sentry()
     except Exception as e:
         logger.warning("Sentry init skipped: %s", e)
     yield
     # Shutdown
     try:
-        from backend.persistence.database import dispose_engine
+        from persistence.database import dispose_engine
         await dispose_engine()
     except Exception as e:
         logger.warning("Engine dispose skipped: %s", e)
     try:
-        from backend.observability import flush_traces
+        from observability import flush_traces
         flush_traces()
     except Exception as e:
         logger.debug("Trace flush skipped: %s", e)
@@ -982,6 +982,228 @@ async def clear_all_memory():
         return {"status": "cleared"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Tier-2b: Public REST API with API keys ───────────────────────
+
+
+import hashlib
+import secrets
+from datetime import datetime, timezone
+
+
+def _utcnow() -> datetime:
+    """Current UTC time. Used for API key expiry, etc."""
+    return datetime.now(timezone.utc)
+
+
+def _hash_api_key(raw_key: str) -> str:
+    """SHA-256 hash an API key for storage. Raw keys are never stored."""
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+
+def _generate_api_key() -> tuple[str, str, str]:
+    """Generate a new API key. Returns (raw_key, key_hash, key_prefix).
+
+    Format: pm_live_<32 random chars>. The prefix `pm_live_` is
+    shown to the user for identification.
+    """
+    random_part = secrets.token_urlsafe(24)
+    raw = f"pm_live_{random_part}"
+    return raw, _hash_api_key(raw), f"pm_live_{random_part[:8]}"
+
+
+async def _authenticate_api_key_async(authorization: str | None):
+    """Async version: extract and validate the API key from the
+    Authorization header. Returns the ApiKey row if valid, None if not.
+
+    Return type is intentionally not annotated to avoid Pydantic
+    v2 forward-ref resolution issues at request time.
+    """
+    if not authorization:
+        return None
+    # Accept both "Bearer pm_live_..." and "pm_live_..." (raw)
+    raw = authorization.strip()
+    if raw.lower().startswith("bearer "):
+        raw = raw[7:].strip()
+    if not raw.startswith("pm_live_"):
+        return None
+    key_hash = _hash_api_key(raw)
+    repo = get_repository()
+    return await repo.get_api_key_by_hash(key_hash)
+
+
+def _authenticate_api_key(authorization: str | None = Header(None)):
+    """Sync wrapper for non-async callers (e.g. tests).
+
+    In FastAPI handlers, prefer awaiting _authenticate_api_key_async
+    directly. This sync version uses asyncio.run() which is fine in
+    a non-async context but will fail in an already-running loop.
+
+    Return type is intentionally not annotated to avoid Pydantic
+    v2 forward-ref resolution issues at request time.
+    """
+    if not authorization:
+        return None
+    raw = authorization.strip()
+    if raw.lower().startswith("bearer "):
+        raw = raw[7:].strip()
+    if not raw.startswith("pm_live_"):
+        return None
+    key_hash = _hash_api_key(raw)
+    try:
+        return asyncio.run(_lookup_coro(key_hash))
+    except RuntimeError:
+        # Already in an event loop — return None and let the caller
+        # use the async version.
+        return None
+
+
+async def _lookup_coro(key_hash: str):
+    repo = get_repository()
+    return await repo.get_api_key_by_hash(key_hash)
+
+
+class CreateKeyRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    scopes: list[str] = []
+    rate_limit_per_minute: int | None = Field(default=None, ge=1, le=10000)
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
+
+
+class CreateKeyResponse(BaseModel):
+    id: str
+    name: str
+    key: str
+    key_prefix: str
+    scopes: list[str]
+    rate_limit_per_minute: int | None = None
+    created_at: str
+    expires_at: str | None = None
+
+
+class ListKeysResponse(BaseModel):
+    keys: list = []
+
+
+class PublicPitchResponse(BaseModel):
+    """Response shape for /api/v1/pitches/{id}."""
+    session_id: str
+    is_public: bool
+    mode: str
+    created_at: str
+    pitch_excerpt: str
+    verdict: dict
+    confidence_score: int
+    investment_signal: str
+
+
+@app.post("/api/v1/keys", response_model=CreateKeyResponse, status_code=201)
+async def create_api_key(req: CreateKeyRequest):
+    """Create a new API key. The raw key is returned ONCE — store it securely."""
+    from datetime import timedelta
+
+    raw, key_hash, key_prefix = _generate_api_key()
+    expires_at = None
+    if req.expires_in_days is not None:
+        expires_at = _utcnow() + timedelta(days=req.expires_in_days)
+
+    repo = get_repository()
+    key = await repo.create_api_key(
+        name=req.name,
+        key_hash=key_hash,
+        key_prefix=key_prefix,
+        scopes=req.scopes,
+        expires_at=expires_at,
+        rate_limit_per_minute=req.rate_limit_per_minute,
+    )
+    return CreateKeyResponse(
+        id=key.id,
+        name=key.name,
+        key=raw,  # only returned here
+        key_prefix=key.key_prefix,
+        scopes=key.scopes,
+        rate_limit_per_minute=key.rate_limit_per_minute,
+        created_at=key.created_at.isoformat() if key.created_at else "",
+        expires_at=key.expires_at.isoformat() if key.expires_at else None,
+    )
+
+
+@app.get("/api/v1/keys", response_model=ListKeysResponse)
+async def list_api_keys(authorization: str | None = Header(None)):
+    """List API keys. Requires a valid key in the Authorization header."""
+    key = await _authenticate_api_key_async(authorization)
+    if key is None:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    repo = get_repository()
+    keys = await repo.list_api_keys()
+    # Strip key_hash from the response
+    return ListKeysResponse(
+        keys=[k.to_dict(include_hash=False) for k in keys]
+    )
+
+
+@app.delete("/api/v1/keys/{key_id}", status_code=204)
+async def revoke_api_key(key_id: str, authorization: str | None = Header(None)):
+    """Revoke an API key. Future requests with this key return 401."""
+    auth_key = await _authenticate_api_key_async(authorization)
+    if auth_key is None:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    repo = get_repository()
+    revoked = await repo.revoke_api_key(key_id)
+    if not revoked:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return None
+
+
+@app.get("/api/v1/pitches/{session_id}", response_model=PublicPitchResponse)
+async def api_v1_get_pitch(session_id: str, authorization: str | None = Header(None)):
+    """Public API: get a sanitized pitch verdict by session ID.
+
+    Requires a valid API key. Rate-limited per-key.
+    """
+    api_key = await _authenticate_api_key_async(authorization)
+    if api_key is None:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    if not api_key.is_active or api_key.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="API key revoked")
+    # Record usage
+    repo = get_repository()
+    await repo.record_api_key_usage(api_key.id)
+    # Return the same sanitized verdict shape as the /v/<id>/public endpoint
+    session = await repo.get_session(session_id)
+    if session is None or not session.is_public or session.status != "completed":
+        raise HTTPException(status_code=404, detail="Verdict not found")
+    verdict = await repo.get_verdict(session_id)
+    if verdict is None:
+        raise HTTPException(status_code=404, detail="Verdict not found")
+    pitch_excerpt = (session.pitch_summary or "")[:200]
+    if len(session.pitch_summary or "") > 200:
+        pitch_excerpt += "..."
+    return PublicPitchResponse(
+        session_id=session_id,
+        is_public=session.is_public,
+        mode=session.mode,
+        created_at=session.created_at.isoformat() if session.created_at else "",
+        pitch_excerpt=pitch_excerpt,
+        verdict={
+            "strongest": verdict.strongest or "",
+            "weakness": verdict.weakness or "",
+            "fix": verdict.fix or "",
+            "recommendation": verdict.recommendation or "",
+            "investment_score": verdict.investment_score,
+            "verdict_text": (verdict.verdict_text or "")[:1000],
+        },
+        confidence_score=verdict.confidence_score,
+        investment_signal=verdict.signal or "MEDIUM",
+    )
+
+
+@app.get("/api/v1/health")
+async def api_v1_health():
+    """Public API: liveness probe. No auth required."""
+    return {"status": "ok", "tier": "v1"}
+
 
 if __name__ == "__main__":
     import uvicorn

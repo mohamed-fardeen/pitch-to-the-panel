@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from .database import get_sessionmaker
 from .models import (
     AgentPersona,
+    ApiKey,
     PitchRevision,
     PitchSession,
     PitchTurn,
@@ -404,6 +405,85 @@ class SqlAlchemySessionRepository(SessionRepository):
         if session_id not in self._events:
             self._events[session_id] = SessionEventBus()
         return self._events[session_id]
+
+    # ─── API Keys (Tier-2b) ─────────────────────────────────────
+
+    async def create_api_key(
+        self,
+        *,
+        name: str,
+        key_hash: str,
+        key_prefix: str,
+        user_id: Optional[str] = None,
+        scopes: Optional[list[str]] = None,
+        expires_at: Optional[Any] = None,
+        rate_limit_per_minute: Optional[int] = None,
+    ) -> ApiKey:
+        from .models import ApiKey
+        key = ApiKey(
+            name=name,
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            user_id=user_id,
+            scopes=list(scopes or []),
+            expires_at=expires_at,
+            rate_limit_per_minute=rate_limit_per_minute,
+        )
+        async with self._sessionmaker() as session:
+            session.add(key)
+            await session.commit()
+            await session.refresh(key)
+        return key
+
+    async def get_api_key_by_hash(self, key_hash: str) -> Optional[ApiKey]:
+        from datetime import datetime, timezone
+        async with self._sessionmaker() as session:
+            from sqlalchemy import select
+            stmt = select(ApiKey).where(ApiKey.key_hash == key_hash)
+            result = await session.execute(stmt)
+            key = result.scalar_one_or_none()
+            if key is None:
+                return None
+            if not key.is_active or key.revoked_at is not None:
+                return None
+            if key.expires_at is not None:
+                if datetime.now(timezone.utc) > key.expires_at:
+                    return None
+            return key
+
+    async def list_api_keys(self, user_id: Optional[str] = None) -> list[ApiKey]:
+        from sqlalchemy import select
+        async with self._sessionmaker() as session:
+            stmt = select(ApiKey).order_by(ApiKey.created_at.desc())
+            if user_id is not None:
+                stmt = stmt.where(ApiKey.user_id == user_id)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def revoke_api_key(self, key_id: str) -> bool:
+        from datetime import datetime, timezone
+        async with self._sessionmaker() as session:
+            key = await session.get(ApiKey, key_id)
+            if key is None:
+                return False
+            key.is_active = False
+            key.revoked_at = datetime.now(timezone.utc)
+            await session.commit()
+            return True
+
+    async def record_api_key_usage(self, key_id: str) -> None:
+        from datetime import datetime, timezone
+        from sqlalchemy import update
+        async with self._sessionmaker() as session:
+            await session.execute(
+                update(ApiKey)
+                .where(ApiKey.id == key_id)
+                .values(
+                    total_requests=ApiKey.total_requests + 1,
+                    last_used_at=datetime.now(timezone.utc),
+                )
+            )
+            await session.commit()
 
     # ─── Diagnostics ──────────────────────────────────────────────
 

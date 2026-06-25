@@ -10,7 +10,12 @@ from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
-from backend.observability import trace_llm_call
+try:
+    from backend.observability import trace_llm_call
+except ImportError:
+    # When run from backend/ as cwd (e.g. uvicorn main:app), the bare
+    # path `observability` works. Fall back to it.
+    from observability import trace_llm_call  # type: ignore[no-redef]
 
 load_dotenv()
 logger = logging.getLogger(__name__)

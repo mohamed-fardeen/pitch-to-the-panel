@@ -61,6 +61,9 @@ class InMemorySessionRepository(SessionRepository):
         self._session_turns: dict[str, list[PitchTurn]] = {}
         self._session_revisions: dict[str, list[PitchRevision]] = {}
         self._session_verdicts: dict[str, PitchVerdict] = {}
+        # Tier-2b: API keys
+        self._api_keys: dict[str, "ApiKey"] = {}  # by key id
+        self._api_key_by_hash: dict[str, str] = {}  # hash -> key id
 
     # ─── Lifecycle ────────────────────────────────────────────────
 
@@ -379,6 +382,80 @@ class InMemorySessionRepository(SessionRepository):
     def __len__(self) -> int:
         """Total live sessions (for tests/diagnostics)."""
         return len(self._sessions)
+
+    # ─── API Keys (Tier-2b) ─────────────────────────────────────
+
+    async def create_api_key(
+        self,
+        *,
+        name: str,
+        key_hash: str,
+        key_prefix: str,
+        user_id: Optional[str] = None,
+        scopes: Optional[list[str]] = None,
+        expires_at: Optional[Any] = None,
+        rate_limit_per_minute: Optional[int] = None,
+    ) -> "ApiKey":
+        import uuid as _uuid_lib
+        from datetime import datetime, timezone
+        from .models import ApiKey
+        now = datetime.now(timezone.utc)
+        key = ApiKey(
+            id=str(_uuid_lib.uuid4()),
+            name=name,
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            user_id=user_id,
+            scopes=list(scopes or []),
+            expires_at=expires_at,
+            rate_limit_per_minute=rate_limit_per_minute,
+            created_at=now,
+            updated_at=now,
+        )
+        self._api_keys[key.id] = key
+        self._api_key_by_hash[key_hash] = key.id
+        return key
+
+    async def get_api_key_by_hash(self, key_hash: str) -> Optional["ApiKey"]:
+        from datetime import datetime, timezone
+        key_id = self._api_key_by_hash.get(key_hash)
+        if key_id is None:
+            return None
+        key = self._api_keys.get(key_id)
+        if key is None:
+            return None
+        # Skip revoked or expired keys
+        if not key.is_active or key.revoked_at is not None:
+            return None
+        if key.expires_at is not None:
+            if datetime.now(timezone.utc) > key.expires_at:
+                return None
+        return key
+
+    async def list_api_keys(self, user_id: Optional[str] = None) -> list["ApiKey"]:
+        rows = list(self._api_keys.values())
+        if user_id is not None:
+            rows = [k for k in rows if k.user_id == user_id]
+        # Newest first
+        rows.sort(key=lambda k: k.created_at, reverse=True)
+        return rows
+
+    async def revoke_api_key(self, key_id: str) -> bool:
+        from datetime import datetime, timezone
+        key = self._api_keys.get(key_id)
+        if key is None:
+            return False
+        key.is_active = False
+        key.revoked_at = datetime.now(timezone.utc)
+        return True
+
+    async def record_api_key_usage(self, key_id: str) -> None:
+        from datetime import datetime, timezone
+        key = self._api_keys.get(key_id)
+        if key is None:
+            return
+        key.total_requests += 1
+        key.last_used_at = datetime.now(timezone.utc)
 
 
 __all__ = ["InMemorySessionRepository"]

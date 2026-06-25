@@ -47,6 +47,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every transcript produces a well-formed verdict. Runs against a
   deterministic mock by default; set `PANELMIND_EVAL_REAL_LLM=1` to
   run against the real LLM provider. Catches prompt regressions in CI.
+- **Public REST API with API keys** (Tier-2b): SHA-256-hashed API
+  keys with prefix `pm_live_`. POST /api/v1/keys creates a key
+  (raw returned once, never stored), GET /api/v1/keys lists keys,
+  DELETE /api/v1/keys/{id} revokes. Public endpoints
+  GET /api/v1/pitches/{id} (sanitized verdict, requires key) and
+  GET /api/v1/health (no auth). Per-key rate-limit and scopes.
+  ApiKey model added to persistence with usage tracking.
+  testing. `tests/evals/golden_transcripts/*.json` are 4 sample
+  pitches across the 3 modes with expected verdict shape, score
+  ranges, and keyword presence. The eval suite (14 tests) verifies
+  every transcript produces a well-formed verdict. Runs against a
+  deterministic mock by default; set `PANELMIND_EVAL_REAL_LLM=1` to
+  run against the real LLM provider. Catches prompt regressions in CI.
 
 ### Fixed
 - **Module duplication**: `backend/main.py` was importing

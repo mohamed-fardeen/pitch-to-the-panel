@@ -33,15 +33,39 @@ import pytest
 # IMPORTANT: This dual setup creates a *module duplication* problem —
 # `persistence` (bare) and `backend.persistence` (absolute) are two
 # different module objects with separate module-level state (e.g. the
-# factory's `_default_repo` global). Tests should prefer the absolute
-# import path (`from backend.persistence import ...`) to ensure they
-# share state with the production code.
+# factory's `_default_repo` global). To work around this, we add
+# `backend.persistence` as an alias of `persistence` in sys.modules
+# after they're both loaded. This makes both import paths resolve
+# to the same module object.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BACKEND_DIR = PROJECT_ROOT / "backend"
 for path in (PROJECT_ROOT, BACKEND_DIR):
     p = str(path)
     if p not in sys.path:
         sys.path.insert(0, p)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _unify_persistence_module():
+    """Make `persistence` and `backend.persistence` resolve to the same module.
+
+    Without this, `set_repository(repo)` from one path is invisible
+    to `get_repository()` from the other. We import both, then point
+    `persistence`'s sys.modules entry to whichever was loaded first.
+    """
+    import importlib
+
+    # Import both — whichever loads first becomes the canonical one
+    persistence = importlib.import_module("persistence")
+    backend_persistence = importlib.import_module("backend.persistence")
+    if persistence is not backend_persistence:
+        # Point the duplicate to the original
+        sys.modules["backend.persistence"] = persistence
+        # Also re-export the factory's _default_repo so the duplicate
+        # sees the same value.
+        backend_persistence.factory._default_repo = (
+            persistence.factory._default_repo
+        )
 
 
 @pytest.fixture
