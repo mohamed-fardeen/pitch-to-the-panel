@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from .models import ApiKey
+    from .models import ApiKey, PromptExperiment
 
 from .models import (
     AgentPersona,
@@ -36,6 +36,7 @@ from .models import (
     PitchSession,
     PitchTurn,
     PitchVerdict,
+    PromptExperiment,
     SessionStatus,
     TurnRole,
     TurnType,
@@ -261,6 +262,43 @@ class SessionRepository(ABC):
     @abstractmethod
     async def record_api_key_usage(self, key_id: str) -> None:
         """Increment usage counters for an API key."""
+
+    # ─── Prompt Experiments (Tier-2c) ───────────────────────────
+
+    @abstractmethod
+    async def create_prompt_experiment(
+        self, experiment: "PromptExperiment"
+    ) -> "PromptExperiment":
+        """Insert a new prompt experiment."""
+
+    @abstractmethod
+    async def get_prompt_experiment_by_name(
+        self, name: str
+    ) -> Optional["PromptExperiment"]:
+        """Look up an experiment by name."""
+
+    @abstractmethod
+    async def update_prompt_experiment(
+        self, experiment: "PromptExperiment"
+    ) -> "PromptExperiment":
+        """Update an existing prompt experiment."""
+
+    @abstractmethod
+    async def record_prompt_outcome(
+        self,
+        *,
+        experiment_name: str,
+        session_id: str,
+        metric_name: str,
+        metric_value: float,
+    ) -> None:
+        """Record (or update) a metric value for a session's experiment assignment."""
+
+    @abstractmethod
+    async def list_prompt_outcomes(
+        self, experiment_name: str, metric_name: str
+    ) -> list[tuple[str, str, float]]:
+        """List outcomes for an experiment. Returns (variant, assignment_id, value) tuples."""
 
     # ─── Convenience ─────────────────────────────────────────────
 

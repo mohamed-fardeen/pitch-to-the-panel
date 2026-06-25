@@ -64,6 +64,11 @@ class InMemorySessionRepository(SessionRepository):
         # Tier-2b: API keys
         self._api_keys: dict[str, "ApiKey"] = {}  # by key id
         self._api_key_by_hash: dict[str, str] = {}  # hash -> key id
+        # Tier-2c: Prompt experiments
+        self._experiments: dict[str, "PromptExperiment"] = {}  # by name
+        # Outcomes: keyed by (experiment_name, metric_name), value is
+        # list of (variant, assignment_id, session_id, value).
+        self._outcomes: dict[str, list[tuple[str, str, str, float]]] = {}
 
     # ─── Lifecycle ────────────────────────────────────────────────
 
@@ -456,6 +461,76 @@ class InMemorySessionRepository(SessionRepository):
             return
         key.total_requests += 1
         key.last_used_at = datetime.now(timezone.utc)
+
+    # ─── Prompt Experiments (Tier-2c) ───────────────────────────
+
+    async def create_prompt_experiment(
+        self, experiment: "PromptExperiment"
+    ) -> "PromptExperiment":
+        from datetime import datetime, timezone
+        if not experiment.id:
+            experiment.id = str(uuid.uuid4())
+        experiment.created_at = experiment.created_at or datetime.now(timezone.utc)
+        experiment.updated_at = experiment.created_at
+        self._experiments[experiment.name] = experiment
+        return experiment
+
+    async def get_prompt_experiment_by_name(
+        self, name: str
+    ) -> Optional["PromptExperiment"]:
+        return self._experiments.get(name)
+
+    async def update_prompt_experiment(
+        self, experiment: "PromptExperiment"
+    ) -> "PromptExperiment":
+        from datetime import datetime, timezone
+        if experiment.name not in self._experiments:
+            # Insert if missing
+            return await self.create_prompt_experiment(experiment)
+        existing = self._experiments[experiment.name]
+        existing.description = experiment.description
+        existing.is_active = experiment.is_active
+        existing.variant_weights = dict(experiment.variant_weights)
+        existing.meta = dict(experiment.meta)
+        existing.updated_at = datetime.now(timezone.utc)
+        return existing
+
+    async def record_prompt_outcome(
+        self,
+        *,
+        experiment_name: str,
+        session_id: str,
+        metric_name: str,
+        metric_value: float,
+    ) -> None:
+        from prompts_versions.router import pick_variant
+        from uuid import uuid4
+
+        exp = self._experiments.get(experiment_name)
+        if exp is None:
+            return  # No experiment — silently ignore
+        # Determine the variant (deterministic by session_id, like the router)
+        variant = pick_variant(
+            experiment_name, session_id, dict(exp.variant_weights)
+        )
+        key = f"{experiment_name}:{metric_name}"
+        outcomes = self._outcomes.setdefault(key, [])
+        # If there's already an outcome for this session, update it
+        for i, (v, _aid, sid, _val) in enumerate(outcomes):
+            if v == variant and sid == session_id:
+                outcomes[i] = (variant, str(uuid4()), session_id, metric_value)
+                return
+        outcomes.append((variant, str(uuid4()), session_id, metric_value))
+
+    async def list_prompt_outcomes(
+        self, experiment_name: str, metric_name: str
+    ) -> list[tuple[str, str, float]]:
+        """Returns (variant, assignment_id, value) tuples."""
+        key = f"{experiment_name}:{metric_name}"
+        return [
+            (variant, aid, value)
+            for variant, aid, _sid, value in self._outcomes.get(key, [])
+        ]
 
 
 __all__ = ["InMemorySessionRepository"]

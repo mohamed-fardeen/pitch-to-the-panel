@@ -30,6 +30,7 @@ from typing import Any, Optional
 from sqlalchemy import (
     JSON,
     Boolean,
+    DateTime,
     Float,
     ForeignKey,
     Integer,
@@ -337,7 +338,84 @@ class PitchRevision(Base):
     session: Mapped["PitchSession"] = relationship(back_populates="revisions")
 
 
-# ─── API Keys (Tier-2b) ────────────────────────────────────────────
+# ─── Prompt Experiments (Tier-2c) ──────────────────────────────────
+
+
+class PromptExperiment(Base):
+    """An A/B test between two prompt versions.
+
+    Each experiment has a name (e.g. "controller-prompt-v2") and two
+    or more "variants" (different prompt versions). Sessions are
+    assigned to variants via a deterministic hash of session_id.
+    Outcomes are recorded separately so we can compare.
+    """
+
+    __tablename__ = "prompt_experiments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # Whether the experiment is currently active. Inactive experiments
+    # always serve the "control" variant.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Map of variant_name -> traffic_weight (int, relative). The sum
+    # is normalized at runtime. E.g. {"control": 80, "v2": 20} means
+    # 80% of sessions get "control" and 20% get "v2".
+    variant_weights: Mapped[dict[str, int]] = mapped_column(JSON, default=dict, nullable=False)
+    # Optional metadata (variant descriptions, dates, owner, etc.)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class PromptAssignment(Base):
+    """A specific session's assignment to a variant of an experiment.
+
+    Created when a session is first routed through an experiment.
+    Used to ensure the same session always gets the same variant
+    (deterministic A/B).
+    """
+
+    __tablename__ = "prompt_assignments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    experiment_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("prompt_experiments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    session_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    variant: Mapped[str] = mapped_column(String(50), nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class PromptOutcome(Base):
+    """An outcome (e.g. user rating, score) for a prompt assignment.
+
+    Used to compare variants. We record multiple metrics per assignment
+    so you can analyze different aspects (e.g. rating, time-to-completion,
+    cost).
+    """
+
+    __tablename__ = "prompt_outcomes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    assignment_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("prompt_assignments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    metric_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    metric_value: Mapped[float] = mapped_column(Float, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
 
 
 class ApiKey(Base):

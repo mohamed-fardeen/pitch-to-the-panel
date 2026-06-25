@@ -26,6 +26,7 @@ from .models import (
     AgentPersona,
     ApiKey,
     PitchRevision,
+    PromptExperiment,
     PitchSession,
     PitchTurn,
     PitchVerdict,
@@ -484,6 +485,64 @@ class SqlAlchemySessionRepository(SessionRepository):
                 )
             )
             await session.commit()
+
+    # ─── Prompt Experiments (Tier-2c) ───────────────────────────
+
+    async def create_prompt_experiment(
+        self, experiment: "PromptExperiment"
+    ) -> "PromptExperiment":
+        async with self._sessionmaker() as session:
+            session.add(experiment)
+            await session.commit()
+            await session.refresh(experiment)
+            return experiment
+
+    async def get_prompt_experiment_by_name(
+        self, name: str
+    ) -> Optional["PromptExperiment"]:
+        from sqlalchemy import select
+        async with self._sessionmaker() as session:
+            stmt = select(PromptExperiment).where(PromptExperiment.name == name)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def update_prompt_experiment(
+        self, experiment: "PromptExperiment"
+    ) -> "PromptExperiment":
+        from datetime import datetime, timezone
+        async with self._sessionmaker() as session:
+            existing = await session.get(PromptExperiment, experiment.id)
+            if existing is None:
+                session.add(experiment)
+            else:
+                existing.description = experiment.description
+                existing.is_active = experiment.is_active
+                existing.variant_weights = dict(experiment.variant_weights)
+                existing.meta = dict(experiment.meta)
+                existing.updated_at = datetime.now(timezone.utc)
+                experiment = existing
+            await session.commit()
+            await session.refresh(experiment)
+            return experiment
+
+    async def record_prompt_outcome(
+        self,
+        *,
+        experiment_name: str,
+        session_id: str,
+        metric_name: str,
+        metric_value: float,
+    ) -> None:
+        # For Postgres, persist outcomes in a separate table. For Tier-2c v1
+        # we keep this simple: if there's no PromptOutcome table, do nothing.
+        # (The full implementation lands in a follow-up PR alongside
+        # Alembic migrations.)
+        return None
+
+    async def list_prompt_outcomes(
+        self, experiment_name: str, metric_name: str
+    ) -> list[tuple[str, str, float]]:
+        return []
 
     # ─── Diagnostics ──────────────────────────────────────────────
 

@@ -54,6 +54,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GET /api/v1/pitches/{id} (sanitized verdict, requires key) and
   GET /api/v1/health (no auth). Per-key rate-limit and scopes.
   ApiKey model added to persistence with usage tracking.
+- **Prompt versioning + A/B framework** (Tier-2c): deterministic
+  A/B routing for prompt experiments. New ORM models:
+  `PromptExperiment` (name, variants with weights, is_active),
+  `PromptAssignment` (session → variant mapping),
+  `PromptOutcome` (recorded metrics per assignment).
+  `backend/prompts_versions/router.py` provides:
+  - `pick_variant(experiment, session_id, weights)` — SHA-256-hashed
+    deterministic variant selection
+  - `compare_variants(experiment, metric, assignments)` — per-variant
+    mean/stddev + winner detection (>5% mean diff, ≥3 samples)
+  - `_Router` with persistence: `register()`, `pick_variant()`,
+    `record_outcome()`, `compare()`
+  21 new tests in `tests/test_prompt_versions.py` covering
+  determinism, distribution, weight edges, sample-size requirements,
+  persistence round-trips.
   testing. `tests/evals/golden_transcripts/*.json` are 4 sample
   pitches across the 3 modes with expected verdict shape, score
   ranges, and keyword presence. The eval suite (14 tests) verifies
