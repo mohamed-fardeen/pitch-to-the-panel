@@ -10,14 +10,22 @@ function SignInForm() {
   const callbackUrl = searchParams.get("callbackUrl") ?? "/app/pitch/new";
   const error = searchParams.get("error");
 
-  // Detect which providers are configured (via the public auth endpoint
-  // would require a server fetch; for now, infer from presence of buttons).
   const [submitting, setSubmitting] = useState<string | null>(null);
+  const [devEmail, setDevEmail] = useState("");
+  const [devPassword, setDevPassword] = useState("");
 
-  const handleProvider = async (provider: "google" | "github") => {
+  const handleProvider = async (provider: "google" | "github" | "dev-credentials") => {
     setSubmitting(provider);
     try {
-      await signIn(provider, { callbackUrl });
+      if (provider === "dev-credentials") {
+        await signIn("dev-credentials", {
+          email: devEmail || "dev@panelmind.local",
+          password: devPassword || "dev",
+          callbackUrl,
+        });
+      } else {
+        await signIn(provider, { callbackUrl });
+      }
     } catch (err) {
       console.error("Sign-in failed:", err);
       setSubmitting(null);
@@ -90,6 +98,47 @@ function SignInForm() {
               </svg>
               {submitting === "github" ? "Redirecting…" : "Continue with GitHub"}
             </button>
+          </div>
+
+          {/* Local dev login — accepts any email + password. Only available
+              in dev mode. Disable in production by setting
+              PANELMIND_ALLOW_DEV_LOGIN=false. */}
+          <div className="mt-8 pt-6 border-t border-ink-100">
+            <p className="text-xs text-ink-400 uppercase tracking-wider font-bold mb-3 text-center">
+              Local dev sign-in
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleProvider("dev-credentials");
+              }}
+              className="space-y-2"
+            >
+              <input
+                type="email"
+                value={devEmail}
+                onChange={(e) => setDevEmail(e.target.value)}
+                placeholder="dev@panelmind.local"
+                className="w-full rounded-xl border border-ink-200 bg-ink-50 px-4 py-2 text-sm text-ink-900 placeholder-ink-300 focus:border-primary focus:bg-white focus:outline-none"
+              />
+              <input
+                type="password"
+                value={devPassword}
+                onChange={(e) => setDevPassword(e.target.value)}
+                placeholder="any password"
+                className="w-full rounded-xl border border-ink-200 bg-ink-50 px-4 py-2 text-sm text-ink-900 placeholder-ink-300 focus:border-primary focus:bg-white focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={submitting !== null}
+                className="w-full rounded-xl bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-900 hover:bg-ink-200 transition-colors disabled:opacity-50"
+              >
+                {submitting === "dev-credentials" ? "Signing in…" : "Dev sign-in"}
+              </button>
+            </form>
+            <p className="mt-2 text-[10px] text-ink-400 text-center">
+              Any email + any password work in dev mode
+            </p>
           </div>
 
           <p className="mt-8 text-center text-xs text-ink-400">

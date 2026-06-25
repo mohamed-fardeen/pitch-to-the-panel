@@ -19,6 +19,7 @@
 import type { NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
 import GitHub from "next-auth/providers/github";
+import Credentials from "next-auth/providers/credentials";
 
 const ALLOWED_EMAILS = (process.env.PANELMIND_ALLOWED_EMAILS ?? "")
   .split(",")
@@ -56,7 +57,32 @@ export const authConfig: NextAuthConfig = {
           }),
         ]
       : []),
-    // Credentials provider placeholder — not wired in Tier 0. Add in Tier 1.
+    // Credentials provider for local dev. Accepts any email + password
+    // combo (no actual validation — this is for testing the sign-in flow
+    // without setting up OAuth). Disable in production by setting
+    // PANELMIND_ALLOW_DEV_LOGIN=false.
+    ...(process.env.PANELMIND_ALLOW_DEV_LOGIN !== "false"
+      ? [
+          Credentials({
+            id: "dev-credentials",
+            name: "Local dev (no password)",
+            credentials: {
+              email: { label: "Email", type: "email", placeholder: "dev@panelmind.local" },
+              password: { label: "Password", type: "password", placeholder: "any" },
+            },
+            async authorize(credentials) {
+              if (!credentials?.email) return null;
+              // Local dev: accept any email, no password check
+              return {
+                id: credentials.email as string,
+                email: credentials.email as string,
+                name: (credentials.email as string).split("@")[0],
+                image: null,
+              };
+            },
+          }),
+        ]
+      : []),
   ],
 
   callbacks: {
