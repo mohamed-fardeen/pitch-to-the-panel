@@ -16,6 +16,7 @@ from orchestrator import (
     generate_fact_check,
     generate_rebuttal_response,
     stream_echochamber,
+    ensure_report_for_session,
     AGENTS_CONFIG
 )
 from services.llm import llm_provider
@@ -249,14 +250,13 @@ async def approve_summary(req: SummaryApproval):
     
     session["hitl_data"]["corrected_summary"] = req.corrected_summary
     if "events" not in session:
-        import asyncio
         session["events"] = {
             "answer_event": asyncio.Event(),
             "interrupt_event": asyncio.Event(),
             "summary_approved": asyncio.Event(),
-            "speech_complete_event": asyncio.Event()
+            "speech_complete_event": asyncio.Event(),
         }
-        
+
     session["events"]["summary_approved"].set()
     return {"status": "ok"}
 
@@ -272,7 +272,8 @@ async def post_message(req: ConversationAnswer):
         session["events"] = {
             "answer_event": asyncio.Event(),
             "interrupt_event": asyncio.Event(),
-            "summary_approved": asyncio.Event()
+            "summary_approved": asyncio.Event(),
+            "speech_complete_event": asyncio.Event(),
         }
 
     session["pending_answer"] = message
@@ -447,9 +448,10 @@ async def end_conversation(req: EndConversationRequest):
     if not session:
         raise HTTPException(404, "Session not found")
     
-    # Force immediate termination
+    # Ask the graph to finish at the next safe point. Do not mark the
+    # session cancelled here: cancellation makes the SSE generator stop
+    # before final_node can create the report.
     session["force_end"] = True
-    session["cancelled"] = True
     session["action"] = "end_session"
     
     # Trigger interrupt to stop current execution
@@ -674,7 +676,11 @@ async def get_report_data(session_id: str):
     # Return the structured report data
     report_data = session.get("final_report")
     if not report_data:
-        raise HTTPException(status_code=404, detail="Report not yet generated")
+        verdict_text = session.get("verdict")
+        if verdict_text:
+            report_data = ensure_report_for_session(session, verdict_text)
+        else:
+            raise HTTPException(status_code=404, detail="Report not yet generated")
 
     return report_data
 
@@ -844,7 +850,7 @@ async def get_pitch_history(limit: int = 20):
     (pgvector in production, in-memory fallback in dev).
     """
     try:
-        from backend.services.embeddings import list_all_pitches
+        from services.embeddings import list_all_pitches
 
         records = await list_all_pitches(limit=limit)
         pitches = []

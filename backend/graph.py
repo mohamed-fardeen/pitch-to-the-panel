@@ -113,7 +113,7 @@ def build_agentic_graph(
 
 def action_router(state):
     if state.get("awaiting_user_input"):
-        return "pitcher"
+        return "ask_pitcher"
 
     if state.get("pitcher_interrupt"):
         return "handle_interrupt"

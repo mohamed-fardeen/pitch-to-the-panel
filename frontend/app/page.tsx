@@ -231,7 +231,10 @@ export default function Home() {
     if (rePitch) {
       localStorage.removeItem("pttp_repitch");
       setManualText(rePitch);
-      setStage("pitching");
+      // Don't change stage — let the user review the revised pitch and
+      // click 'Start Debate' themselves. We do add a short toast so it's
+      // obvious the text has been pre-loaded.
+      addLog("✏️ Revised pitch loaded — review and click Start Debate.");
     }
     
     return () => {
@@ -288,6 +291,7 @@ export default function Home() {
     url.searchParams.append("pitch", currentPitch);
     url.searchParams.append("provider", provider);
     url.searchParams.append("mode", difficulty);
+    url.searchParams.append("aggressiveness", String(aggressiveness));
     if (pitcherId) url.searchParams.append("pitcher_id", pitcherId);
 
     if (eventSourceRef.current) {
@@ -401,8 +405,15 @@ export default function Home() {
       setCurrentAgentId(data.agent_id);
       setActiveAgent(null);
 
-      if (data.type === "interviewer_invitation") {
+      const turnNeedsAnswer =
+        data.type === "interviewer_invitation" ||
+        data.type === "interviewer_question";
+
+      if (turnNeedsAnswer) {
         setWaitingForAnswer(true);
+        setAwaitingUserInput(true);
+        setCurrentQuestion(data.content);
+        setManualText("");
       }
 
       if (data.content) {
@@ -414,6 +425,7 @@ export default function Home() {
     eventSource.addEventListener("waiting_for_pitcher", (e: any) => {
       const data = JSON.parse(e.data);
       console.info("[UI] awaiting_user_input triggered");
+      setWaitingForAnswer(true);
       setAwaitingUserInput(true);
       setCurrentQuestion(data.question);
       setManualText("");
@@ -562,7 +574,6 @@ export default function Home() {
   const submitAnswer = async () => {
     if (!manualText) return;
     const ans = manualText;
-    setAwaitingUserInput(false);
     
     console.log("[UI] answer submitted:", ans.substring(0, 50));
     // If we're interrupting while somebody is talking, cancel current speech immediately
@@ -579,19 +590,25 @@ export default function Home() {
         body: JSON.stringify({
           session_id: sessionId,
           message: manualText,
-          interrupt: true // Force interrupt flow
+          interrupt: false // HITL direct answer — NOT an interrupt
         })
       });
 
-      // Render user answer in chat instantly
-      setConversation((prev: ConversationTurn[]) => [
-        ...prev, 
-        { type: "pitcher_response", agent_name: pitcherId || "Alex Chen", content: ans }
-      ]);
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok || result.status !== "answer_received") {
+        setAwaitingUserInput(true);
+        setWaitingForAnswer(true);
+        setConnectionError("The panel was not ready for that answer yet. Please send it again.");
+        return;
+      }
 
+      setAwaitingUserInput(false);
+      setWaitingForAnswer(false);
       setManualText("");
     } catch(e) {
       console.error("Failed to submit answer:", e);
+      setAwaitingUserInput(true);
+      setWaitingForAnswer(true);
     }
   };
 

@@ -85,15 +85,21 @@ export default function ReportPage() {
       return;
     }
 
-    const fetchReport = async () => {
+    const fetchReport = async (retryCount = 0) => {
       try {
         const response = await fetch(`${API_BASE}/session/${sessionId}/report`);
-        if (!response.ok) throw new Error("Failed to fetch report");
+        if (!response.ok) {
+          if (response.status === 404 && retryCount < 5) {
+            setTimeout(() => fetchReport(retryCount + 1), 1000);
+            return;
+          }
+          throw new Error("Failed to fetch report");
+        }
         const data = await response.json();
         setReport(data);
+        setLoading(false);
       } catch (err: any) {
         setError(err.message);
-      } finally {
         setLoading(false);
       }
     };

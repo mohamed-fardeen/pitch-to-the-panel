@@ -81,7 +81,7 @@ async def safe_queue_put(session: dict, event: dict) -> None:
             print(f"[SSE QUEUE ERROR] {e}")
 
 
-def check_manual_interrupt(state: FocusGroupState, session: dict) -> dict | None:
+async def check_manual_interrupt(state: FocusGroupState, session: dict) -> dict | None:
     """
     Checks for a manual 'Jump In' interruption via interrupt_event.
     Injects an acknowledgement from the current/last speaker + the founder message.
@@ -95,7 +95,11 @@ def check_manual_interrupt(state: FocusGroupState, session: dict) -> dict | None
 
         msg = session.get("interrupt_message", "Manual interruption")
         
-        last_agent_id = state.get("last_persona_used", "interviewer")
+        last_agent_id = (
+            session.get("interrupted_agent_id")
+            or state.get("last_persona_used")
+            or "interviewer"
+        )
         agent = AGENTS_CONFIG.get(last_agent_id, {"name": "Panelist", "role": "Expert"})
         
         import random
@@ -118,15 +122,49 @@ def check_manual_interrupt(state: FocusGroupState, session: dict) -> dict | None
         }
         
         founder_turn = {
-            "type": "pitcher_response",
+            "type": "pitcher_interrupt",
             "agent_name": "Founder (Jump In)",
             "content": msg
         }
+
+        recent_context = build_conversation_context(
+            {"conversation": state.get("conversation", [])},
+            last_n=6,
+        )
+        response_prompt = f"""The founder interrupted the panel while you were speaking.
+
+RECENT CONTEXT:
+{recent_context}
+
+FOUNDER'S INTERRUPTION:
+{msg}
+
+Respond as {agent["name"]}. Briefly acknowledge the founder's point, answer or react to it directly, then hand the discussion back to the panel. Keep it under 3 sentences."""
+
+        try:
+            response_text = await llm_provider.generate_response(
+                f"You are {agent['name']}, {agent.get('role', 'Panelist')}.",
+                response_prompt,
+                session.get("provider", state.get("provider", "groq")),
+                stream=False,
+            )
+        except Exception:
+            response_text = "Good context. I'll fold that into the discussion and let the panel continue from here."
+
+        response_turn = {
+            "type": "persona_response",
+            "agent_id": last_agent_id,
+            "agent_name": agent["name"],
+            "role": last_agent_id,
+            "content": response_text,
+        }
+
+        session["interrupted_agent_id"] = None
         
         return {
-            "conversation": [ack_turn, founder_turn],
+            "conversation": [ack_turn, founder_turn, response_turn],
             "action": "ask_persona",
-            "action_input": {"target": None}, # Force controller to pick next based on this new context
+            "action_input": {"target": last_agent_id},
             "pitcher_interrupt": False,
             "awaiting_user_input": False,
             "last_user_interrupt": msg
@@ -312,6 +350,7 @@ def build_conversation_context(session: dict, last_n: int = None) -> str:
     
     return "\n".join(lines)
 
+
 def map_ocean_to_behavior(profile: dict) -> str:
     behaviors = []
     openness = profile.get("openness", 0.5)
@@ -421,7 +460,7 @@ async def controller_node(state: FocusGroupState):
             "action_input": {"target": "interviewer", "question": "The founder has something to add."}
         }
 
-    interrupt_result = check_manual_interrupt(state, session)
+    interrupt_result = await check_manual_interrupt(state, session)
     if interrupt_result:
         if isinstance(interrupt_result, dict):
             interrupt_result["action"] = interrupt_result.get("action", "ask_persona")
@@ -476,8 +515,39 @@ async def controller_node(state: FocusGroupState):
 
     missing = reflection.get("missing", [])
     if missing and mode != "spark":
-        q = f"Clarify: {missing[0]}"
-        return _ctrl_return("ask_pitcher", {"question": q, "target": "interviewer"})
+        asked_missing = session.setdefault("asked_missing_topics", [])
+
+        def _topic_key(topic: str) -> str:
+            return " ".join(str(topic).lower().strip().split())
+
+        next_missing = None
+        for topic in missing:
+            topic_key = _topic_key(topic)
+            if topic_key and topic_key not in asked_missing:
+                next_missing = str(topic)
+                asked_missing.append(topic_key)
+                break
+
+        if next_missing:
+            q = f"Clarify: {next_missing}"
+            return _ctrl_return("ask_pitcher", {"question": q, "target": "interviewer"})
+
+        if last_used in active_panel:
+            idx = active_panel.index(last_used)
+            nc = active_panel[(idx + 1) % len(active_panel)]
+        else:
+            nc = active_panel[0]
+
+        return _ctrl_return(
+            "ask_persona",
+            {
+                "target": nc,
+                "priority_context": (
+                    f"The founder has already been asked about {missing[0]}. "
+                    "React to the answer or advance the discussion without repeating the same clarification."
+                ),
+            },
+        )
 
     recent_actions = action_history[-5:]
     if sum(1 for a in recent_actions if a == "ask_persona") >= 4:
@@ -581,6 +651,12 @@ async def controller_node(state: FocusGroupState):
             idx = active_panel.index(last_used) if last_used in active_panel else -1
             action_input["target"] = active_panel[(idx + 1) % len(active_panel)]
 
+        if action in ["end", "end_session"] and current_step < MIN_TURNS_BEFORE_END:
+            print(f"[CONTROLLER VALIDATION] LLM tried to end early at step {current_step}, forcing ask_persona")
+            action = "ask_persona"
+            idx = active_panel.index(last_used) if last_used in active_panel else -1
+            action_input["target"] = active_panel[(idx + 1) % len(active_panel)]
+
         print(f"[CONTROLLER OUTPUT] Final Action: {action} | Target: {action_input.get('target', 'None')}")
 
         # NOTE: step_count is incremented by memory_update_node (post-step),
@@ -618,7 +694,7 @@ async def persona_node(state: FocusGroupState):
     if force_end_signal(session):
         return check_force_end()
 
-    interrupt_result = check_manual_interrupt(state, session)
+    interrupt_result = await check_manual_interrupt(state, session)
     if interrupt_result:
         return interrupt_result
 
@@ -778,7 +854,7 @@ Full State: {json.dumps(agent_mem)}"""
         "role": persona_id,
         "content": full_response
     }
-    
+
     return {
         "conversation": [new_turn],
         "messages": [full_response],
@@ -794,7 +870,7 @@ async def pitcher_node(state: FocusGroupState):
     if force_end_signal(session):
         return check_force_end()
 
-    interrupt_result = check_manual_interrupt(state, session)
+    interrupt_result = await check_manual_interrupt(state, session)
     if interrupt_result:
         return interrupt_result
 
@@ -802,10 +878,7 @@ async def pitcher_node(state: FocusGroupState):
         event = session["events"]["answer_event"]
         
         if not event.is_set():
-            try:
-                await asyncio.wait_for(asyncio.shield(event.wait()), timeout=30.0)
-            except asyncio.TimeoutError:
-                return {"awaiting_user_input": False}
+            await event.wait()
         
         event.clear()
 
@@ -855,7 +928,7 @@ async def tool_node(state: FocusGroupState):
     if force_end_signal(session):
         return check_force_end()
 
-    interrupt_result = check_manual_interrupt(state, session)
+    interrupt_result = await check_manual_interrupt(state, session)
     if interrupt_result:
         return interrupt_result
 
@@ -935,7 +1008,7 @@ async def memory_update_node(state: FocusGroupState):
             **check_force_end(),
         }
 
-    interrupt_result = check_manual_interrupt(state, session)
+    interrupt_result = await check_manual_interrupt(state, session)
     if interrupt_result:
         return interrupt_result
 
@@ -1107,7 +1180,7 @@ async def reflection_node(state: FocusGroupState):
     if force_end_signal(session):
         return check_force_end()
 
-    interrupt_result = check_manual_interrupt(state, session)
+    interrupt_result = await check_manual_interrupt(state, session)
     if interrupt_result:
         return interrupt_result
 
@@ -1170,30 +1243,53 @@ async def final_node(state: FocusGroupState):
     else:
         investment_signal = "WEAK"
 
-    verdict_text, verdict_parts = await generate_verdict_text(
-        strengths, risks, claims, contradictions, confidence_score, mode, state["provider"]
-    )
+    try:
+        verdict_text, verdict_parts = await generate_verdict_text(
+            strengths, risks, claims, contradictions, confidence_score, mode, state["provider"]
+        )
 
-    charts = await generate_report_charts(strength_pts, risk_pts, clarity_pts, confidence_score)
+        charts = await generate_report_charts(strength_pts, risk_pts, clarity_pts, confidence_score)
 
-    report = {
-        "pitch_summary": state.get("pitch_summary", ""),
-        "strengths": strengths,
-        "risks": risks,
-        "claims": claims,
-        "contradictions": contradictions,
-        "missing_points": missing_points,
-        "verdict": verdict_text,
-        "confidence_score": confidence_score,
-        "investment_signal": investment_signal,
-        "charts": charts,
-        "scores": {
-            "strength": strength_pts,
-            "risk": risk_pts,
-            "clarity": clarity_pts,
-            "consistency": consistency_pts
+        report = {
+            "pitch_summary": state.get("pitch_summary", ""),
+            "strengths": strengths,
+            "risks": risks,
+            "claims": claims,
+            "contradictions": contradictions,
+            "missing_points": missing_points,
+            "verdict": verdict_text,
+            "confidence_score": confidence_score,
+            "investment_signal": investment_signal,
+            "charts": charts,
+            "scores": {
+                "strength": strength_pts,
+                "risk": risk_pts,
+                "clarity": clarity_pts,
+                "consistency": consistency_pts
+            }
         }
-    }
+    except Exception as e:
+        print(f"[FINAL NODE ERROR] {e}")
+        verdict_text = "Evaluation completed with errors."
+        verdict_parts = {"strongest": "", "weakness": "", "fix": ""}
+        report = {
+            "pitch_summary": state.get("pitch_summary", ""),
+            "strengths": strengths,
+            "risks": risks,
+            "claims": claims,
+            "contradictions": contradictions,
+            "missing_points": missing_points,
+            "verdict": verdict_text,
+            "confidence_score": confidence_score,
+            "investment_signal": investment_signal,
+            "charts": {"bar_chart": None, "pie_chart": None},
+            "scores": {
+                "strength": strength_pts,
+                "risk": risk_pts,
+                "clarity": clarity_pts,
+                "consistency": consistency_pts
+            }
+        }
 
     session = sessions.get(state["session_id"])
     if session:
@@ -1384,6 +1480,19 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
         session["active_panel"] = active_panel
         yield sse_event("domain_classified", {**domain_data, "active_panel": active_panel, "mode": mode})
 
+    # Always ensure active_panel is populated — the domain block above only
+    # runs when panel_mode is absent (first pitch). On re-pitch the domain is
+    # already set but active_panel might be stale or missing, so re-derive it.
+    if not session.get("active_panel"):
+        if mode == "spark":
+            _derived_panel = ["enthusiastic", "beginner", "vc", "expert"]
+        elif mode == "reality":
+            _derived_panel = ["hostile", "expert", "vc", "beginner"]
+        else:
+            _derived_panel = ["vc", "expert", "enthusiastic", "hostile"]
+        session["active_panel"] = _derived_panel
+        session.setdefault("domain", {})["active_panel"] = _derived_panel
+
     _panel_from_session = session.get("active_panel", [])
     
     initial_state: FocusGroupState = {
@@ -1515,6 +1624,19 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
                         await queue.put(sse_event("agent_turn", turn))
                         session["conversation"].append(turn)
 
+                    if (
+                        node_name == "pitcher"
+                        and update.get("awaiting_user_input")
+                        and update["conversation"][-1].get("type") == "interviewer_question"
+                    ):
+                        question_turn = update["conversation"][-1]
+                        await queue.put(sse_event("waiting_for_pitcher", {
+                            "session_id": session_id,
+                            "agent_id": question_turn.get("agent_id"),
+                            "agent_name": question_turn.get("agent_name"),
+                            "question": question_turn.get("content", ""),
+                        }))
+
                 if not yielded_start and (node_name == "controller" or "conversation" in update):
                     await queue.put(sse_event("echochamber_start", {
                         "session_id": session_id,
@@ -1532,7 +1654,10 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
                         "summary": update["refined_pitch"]
                     }))
 
-                if update.get("action") == "end_session": break
+                # We no longer break on update.get("action") == "end_session" here
+                # because the controller emits that action *before* final_node runs.
+                # If we break here, we cancel the graph and final_node never executes.
+                # The graph will naturally complete and exit this loop when it reaches the END node.
         except Exception as e:
             print(f"[GRAPH ERROR] {e}")
         finally:
@@ -1563,6 +1688,8 @@ async def stream_meta_analysis(session_id: str, session: dict, provider: str):
     try:
         raw = await llm_provider.generate_response(formatted_prompt, "Insights", provider, stream=False)
         session["black_swan_insight"] = raw
+        if session.get("final_report") is not None:
+            session["final_report"]["black_swan_insight"] = raw
         yield sse_event("black_swan_report", {"insight": raw})
     except Exception: pass
     
@@ -1581,6 +1708,7 @@ async def stream_verdict_from_conversation(session_id: str, session: dict, provi
     parts = session.get("verdict_parts", {"strongest": "", "weakness": "", "fix": ""})
 
     if full_verdict and any(parts.values()):
+        ensure_report_for_session(session, full_verdict)
         yield sse_event("verdict_complete", {"verdict": full_verdict, "parts": parts, "session_id": session_id})
         return
 
@@ -1600,12 +1728,58 @@ async def stream_verdict_from_conversation(session_id: str, session: dict, provi
         session["verdict"] = full_verdict
         session["verdict_parts"] = parts
 
+    ensure_report_for_session(session, full_verdict)
     yield sse_event("verdict_complete", {"verdict": full_verdict, "parts": parts, "session_id": session_id})
+
+
+def ensure_report_for_session(session: dict, verdict_text: str = "") -> dict:
+    report = session.get("final_report")
+    if report:
+        if session.get("black_swan_insight"):
+            report["black_swan_insight"] = session["black_swan_insight"]
+        return report
+
+    memory = session.get("memory", {})
+    strengths = memory.get("strengths", [])
+    risks = memory.get("risks", [])
+    claims = memory.get("claims", [])
+    contradictions = memory.get("contradictions", [])
+    confidence_score = max(0, min(100, int((min(10, len(strengths)) * 0.4 + min(10, len(claims)) * 0.3 + (10 - min(10, len(risks))) * 0.2 + (10 - min(10, len(contradictions))) * 0.1) * 10)))
+
+    if confidence_score >= 75:
+        investment_signal = "STRONG"
+    elif confidence_score >= 50:
+        investment_signal = "MEDIUM"
+    else:
+        investment_signal = "WEAK"
+
+    report = {
+        "pitch_summary": session.get("pitch_summary", ""),
+        "strengths": strengths,
+        "risks": risks,
+        "claims": claims,
+        "contradictions": contradictions,
+        "missing_points": memory.get("missing", []),
+        "verdict": verdict_text or session.get("verdict", "Evaluation completed."),
+        "confidence_score": confidence_score,
+        "investment_signal": investment_signal,
+        "charts": {"bar_chart": None, "pie_chart": None},
+        "scores": {
+            "strength": min(10, len(strengths)),
+            "risk": min(10, len(risks)),
+            "clarity": min(10, len(claims)),
+            "consistency": min(10, len(contradictions)),
+        },
+    }
+    if session.get("black_swan_insight"):
+        report["black_swan_insight"] = session["black_swan_insight"]
+    session["final_report"] = report
+    return report
 
 async def handle_verdict_pushback(session_id: str, pushback: str, provider: str, sessions: dict):
     session = sessions.get(session_id)
     if not session: return
-    prompt = f"Verdict:\n{session['verdict']}\n\nPushback:\n{pushback}"
+    prompt = f"Verdict:\n{session.get('verdict', '')}\n\nPushback:\n{pushback}"
     yield sse_event("pushback_response_start", {"session_id": session_id})
     full_resp = ""
     try:

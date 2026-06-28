@@ -202,13 +202,13 @@ export function LiveFeed({
               </button>
             )}
             
-            <button 
-              onClick={() => {
-                onUserInputChange?.("");
-                onSetAwaitingUserInput?.(true);
-              }} 
+            {/* Manual response: always route through the interrupt path so
+                the backend state machine is notified — never set awaitingUserInput
+                locally without a corresponding backend signal. */}
+            <button
+              onClick={onJumpIn}
               className="w-16 h-16 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-emerald-600 hover:border-emerald-200 transition-all flex items-center justify-center shadow-lg group"
-              title="Manual Response"
+              title="Jump In / Manual Response"
             >
               <span className="material-symbols-outlined text-2xl group-hover:scale-110 transition-transform">edit_note</span>
             </button>
