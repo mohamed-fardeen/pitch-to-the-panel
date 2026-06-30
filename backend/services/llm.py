@@ -1,14 +1,14 @@
-import os
 import json
-import asyncio
 import logging
+import os
+from collections.abc import AsyncGenerator
+
 import httpx
-from typing import AsyncGenerator
+from anthropic import AsyncAnthropic
+from dotenv import load_dotenv
 from google import genai as google_genai
 from google.genai import types
-from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
-from dotenv import load_dotenv
 
 try:
     from backend.observability import trace_llm_call
@@ -125,76 +125,70 @@ class LLMProvider:
         if provider == "anthropic":
             if not self.anthropic_client:
                 raise ValueError("Anthropic API key not configured")
-            
+
             if stream:
                 return self._stream_anthropic(system_prompt, user_prompt, max_tokens)
-            else:
-                response = await self.anthropic_client.messages.create(
-                    model="claude-3-5-sonnet-latest",
-                    max_tokens=max_tokens,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": user_prompt}]
-                )
-                return response.content[0].text
+            response = await self.anthropic_client.messages.create(
+                model="claude-3-5-sonnet-latest",
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}]
+            )
+            return response.content[0].text
 
-        elif provider == "gemini":
+        if provider == "gemini":
             if not self.gemini_client:
                 raise ValueError("Gemini API key not configured")
-            
+
             if stream:
                 return self._stream_gemini(system_prompt, user_prompt, max_tokens)
-            else:
-                response = await self.gemini_client.aio.models.generate_content(
-                    model=self.gemini_model,
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        max_output_tokens=max_tokens
-                    )
+            response = await self.gemini_client.aio.models.generate_content(
+                model=self.gemini_model,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=max_tokens
                 )
-                return response.text
+            )
+            return response.text
 
-        elif provider == "openai":
+        if provider == "openai":
             if not self.openai_client:
                 raise ValueError("OpenAI API key not configured")
-            
+
             if stream:
                 return self._stream_openai(system_prompt, user_prompt, max_tokens)
-            else:
-                response = await self.openai_client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_tokens=max_tokens
-                )
-                return response.choices[0].message.content
+            response = await self.openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
 
-        elif provider == "groq":
+        if provider == "groq":
             if not self.groq_client:
                 raise ValueError("Groq API key not configured")
-            
+
             if stream:
                 return self._stream_groq(system_prompt, user_prompt, max_tokens)
-            else:
-                response = await self.groq_client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_tokens=max_tokens
-                )
-                return response.choices[0].message.content
+            response = await self.groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
 
-        elif provider == "ollama":
+        if provider == "ollama":
             if stream:
                 return self._stream_ollama(system_prompt, user_prompt)
-            else:
-                return await self._sync_ollama(system_prompt, user_prompt)
-        else:
-            raise ValueError(f"Unknown provider: {provider}")
+            return await self._sync_ollama(system_prompt, user_prompt)
+        raise ValueError(f"Unknown provider: {provider}")
 
     async def _stream_anthropic(self, system_prompt: str, user_prompt: str, max_tokens: int = 1024) -> AsyncGenerator[str, None]:
         stream = await self.anthropic_client.messages.create(

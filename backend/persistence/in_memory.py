@@ -12,18 +12,19 @@ implementation: every method here corresponds to one in
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from .models import (
     AgentPersona,
+    ApiKey,
     PitchRevision,
     PitchSession,
     PitchTurn,
     PitchVerdict,
+    PromptExperiment,
     SessionStatus,
     TurnRole,
     TurnType,
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class InMemorySessionRepository(SessionRepository):
@@ -62,10 +63,10 @@ class InMemorySessionRepository(SessionRepository):
         self._session_revisions: dict[str, list[PitchRevision]] = {}
         self._session_verdicts: dict[str, PitchVerdict] = {}
         # Tier-2b: API keys
-        self._api_keys: dict[str, "ApiKey"] = {}  # by key id
+        self._api_keys: dict[str, ApiKey] = {}  # by key id
         self._api_key_by_hash: dict[str, str] = {}  # hash -> key id
         # Tier-2c: Prompt experiments
-        self._experiments: dict[str, "PromptExperiment"] = {}  # by name
+        self._experiments: dict[str, PromptExperiment] = {}  # by name
         # Outcomes: keyed by (experiment_name, metric_name), value is
         # list of (variant, assignment_id, session_id, value).
         self._outcomes: dict[str, list[tuple[str, str, str, float]]] = {}
@@ -80,7 +81,7 @@ class InMemorySessionRepository(SessionRepository):
         mode: str,
         provider: str,
         aggressiveness: int = 5,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> PitchSession:
         if session_id in self._sessions:
             raise ValueError(f"Session {session_id!r} already exists")
@@ -118,7 +119,7 @@ class InMemorySessionRepository(SessionRepository):
         logger.debug("Created in-memory session %s", session_id)
         return session
 
-    async def get_session(self, session_id: str) -> Optional[PitchSession]:
+    async def get_session(self, session_id: str) -> PitchSession | None:
         return self._sessions.get(session_id)
 
     async def list_sessions_for_user(
@@ -134,7 +135,7 @@ class InMemorySessionRepository(SessionRepository):
 
     async def update_session(
         self, session_id: str, **fields: Any
-    ) -> Optional[PitchSession]:
+    ) -> PitchSession | None:
         session = self._sessions.get(session_id)
         if session is None:
             return None
@@ -164,8 +165,8 @@ class InMemorySessionRepository(SessionRepository):
         role: TurnRole | str,
         turn_type: TurnType | str,
         content: str,
-        agent_id: Optional[str] = None,
-        agent_name: Optional[str] = None,
+        agent_id: str | None = None,
+        agent_name: str | None = None,
     ) -> PitchTurn:
         if session_id not in self._sessions:
             raise KeyError(f"Unknown session {session_id!r}")
@@ -194,14 +195,14 @@ class InMemorySessionRepository(SessionRepository):
         session_id: str,
         *,
         verdict_text: str,
-        strongest: Optional[str] = None,
-        weakness: Optional[str] = None,
-        fix: Optional[str] = None,
-        investment_score: Optional[float] = None,
-        recommendation: Optional[str] = None,
+        strongest: str | None = None,
+        weakness: str | None = None,
+        fix: str | None = None,
+        investment_score: float | None = None,
+        recommendation: str | None = None,
         confidence_score: int = 0,
         signal: VerdictSignal | str = VerdictSignal.MEDIUM,
-        charts: Optional[dict[str, Any]] = None,
+        charts: dict[str, Any] | None = None,
     ) -> PitchVerdict:
         if session_id not in self._sessions:
             raise KeyError(f"Unknown session {session_id!r}")
@@ -236,7 +237,7 @@ class InMemorySessionRepository(SessionRepository):
         self._session_verdicts[session_id] = verdict
         return verdict
 
-    async def get_verdict(self, session_id: str) -> Optional[PitchVerdict]:
+    async def get_verdict(self, session_id: str) -> PitchVerdict | None:
         return self._session_verdicts.get(session_id)
 
     # ─── Revisions ────────────────────────────────────────────────
@@ -274,8 +275,8 @@ class InMemorySessionRepository(SessionRepository):
         role: str,
         system_prompt: str,
         goal: str = "",
-        ocean: Optional[dict[str, float]] = None,
-        config: Optional[dict[str, Any]] = None,
+        ocean: dict[str, float] | None = None,
+        config: dict[str, Any] | None = None,
         enabled: bool = True,
     ) -> AgentPersona:
         ocean = ocean or {}
@@ -315,7 +316,7 @@ class InMemorySessionRepository(SessionRepository):
         self._personas[id] = persona
         return persona
 
-    async def get_persona(self, persona_id: str) -> Optional[AgentPersona]:
+    async def get_persona(self, persona_id: str) -> AgentPersona | None:
         return self._personas.get(persona_id)
 
     async def list_personas(self, enabled_only: bool = True) -> list[AgentPersona]:
@@ -329,11 +330,11 @@ class InMemorySessionRepository(SessionRepository):
     async def upsert_user(
         self,
         *,
-        email: Optional[str] = None,
-        name: Optional[str] = None,
-        image_url: Optional[str] = None,
+        email: str | None = None,
+        name: str | None = None,
+        image_url: str | None = None,
         provider: str = "email",
-        provider_account_id: Optional[str] = None,
+        provider_account_id: str | None = None,
     ) -> User:
         key = (provider, provider_account_id) if provider_account_id else None
         if key and key in self._user_by_provider:
@@ -360,12 +361,12 @@ class InMemorySessionRepository(SessionRepository):
             self._user_by_provider[key] = user.id
         return user
 
-    async def get_user(self, user_id: str) -> Optional[User]:
+    async def get_user(self, user_id: str) -> User | None:
         return self._users.get(user_id)
 
     async def get_user_by_provider(
         self, provider: str, provider_account_id: str
-    ) -> Optional[User]:
+    ) -> User | None:
         key = (provider, provider_account_id)
         user_id = self._user_by_provider.get(key)
         if user_id is None:
@@ -396,15 +397,16 @@ class InMemorySessionRepository(SessionRepository):
         name: str,
         key_hash: str,
         key_prefix: str,
-        user_id: Optional[str] = None,
-        scopes: Optional[list[str]] = None,
-        expires_at: Optional[Any] = None,
-        rate_limit_per_minute: Optional[int] = None,
-    ) -> "ApiKey":
+        user_id: str | None = None,
+        scopes: list[str] | None = None,
+        expires_at: Any | None = None,
+        rate_limit_per_minute: int | None = None,
+    ) -> ApiKey:
         import uuid as _uuid_lib
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from .models import ApiKey
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         key = ApiKey(
             id=str(_uuid_lib.uuid4()),
             name=name,
@@ -421,8 +423,8 @@ class InMemorySessionRepository(SessionRepository):
         self._api_key_by_hash[key_hash] = key.id
         return key
 
-    async def get_api_key_by_hash(self, key_hash: str) -> Optional["ApiKey"]:
-        from datetime import datetime, timezone
+    async def get_api_key_by_hash(self, key_hash: str) -> ApiKey | None:
+        from datetime import datetime
         key_id = self._api_key_by_hash.get(key_hash)
         if key_id is None:
             return None
@@ -432,12 +434,11 @@ class InMemorySessionRepository(SessionRepository):
         # Skip revoked or expired keys
         if not key.is_active or key.revoked_at is not None:
             return None
-        if key.expires_at is not None:
-            if datetime.now(timezone.utc) > key.expires_at:
-                return None
+        if key.expires_at is not None and datetime.now(UTC) > key.expires_at:
+            return None
         return key
 
-    async def list_api_keys(self, user_id: Optional[str] = None) -> list["ApiKey"]:
+    async def list_api_keys(self, user_id: str | None = None) -> list[ApiKey]:
         rows = list(self._api_keys.values())
         if user_id is not None:
             rows = [k for k in rows if k.user_id == user_id]
@@ -446,44 +447,44 @@ class InMemorySessionRepository(SessionRepository):
         return rows
 
     async def revoke_api_key(self, key_id: str) -> bool:
-        from datetime import datetime, timezone
+        from datetime import datetime
         key = self._api_keys.get(key_id)
         if key is None:
             return False
         key.is_active = False
-        key.revoked_at = datetime.now(timezone.utc)
+        key.revoked_at = datetime.now(UTC)
         return True
 
     async def record_api_key_usage(self, key_id: str) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
         key = self._api_keys.get(key_id)
         if key is None:
             return
         key.total_requests += 1
-        key.last_used_at = datetime.now(timezone.utc)
+        key.last_used_at = datetime.now(UTC)
 
     # ─── Prompt Experiments (Tier-2c) ───────────────────────────
 
     async def create_prompt_experiment(
-        self, experiment: "PromptExperiment"
-    ) -> "PromptExperiment":
-        from datetime import datetime, timezone
+        self, experiment: PromptExperiment
+    ) -> PromptExperiment:
+        from datetime import datetime
         if not experiment.id:
             experiment.id = str(uuid.uuid4())
-        experiment.created_at = experiment.created_at or datetime.now(timezone.utc)
+        experiment.created_at = experiment.created_at or datetime.now(UTC)
         experiment.updated_at = experiment.created_at
         self._experiments[experiment.name] = experiment
         return experiment
 
     async def get_prompt_experiment_by_name(
         self, name: str
-    ) -> Optional["PromptExperiment"]:
+    ) -> PromptExperiment | None:
         return self._experiments.get(name)
 
     async def update_prompt_experiment(
-        self, experiment: "PromptExperiment"
-    ) -> "PromptExperiment":
-        from datetime import datetime, timezone
+        self, experiment: PromptExperiment
+    ) -> PromptExperiment:
+        from datetime import datetime
         if experiment.name not in self._experiments:
             # Insert if missing
             return await self.create_prompt_experiment(experiment)
@@ -492,7 +493,7 @@ class InMemorySessionRepository(SessionRepository):
         existing.is_active = experiment.is_active
         existing.variant_weights = dict(experiment.variant_weights)
         existing.meta = dict(experiment.meta)
-        existing.updated_at = datetime.now(timezone.utc)
+        existing.updated_at = datetime.now(UTC)
         return existing
 
     async def record_prompt_outcome(
@@ -503,8 +504,9 @@ class InMemorySessionRepository(SessionRepository):
         metric_name: str,
         metric_value: float,
     ) -> None:
-        from prompts_versions.router import pick_variant
         from uuid import uuid4
+
+        from prompts_versions.router import pick_variant
 
         exp = self._experiments.get(experiment_name)
         if exp is None:

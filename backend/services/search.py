@@ -1,5 +1,7 @@
 import asyncio
+
 from duckduckgo_search import DDGS
+
 
 def search_ddg_sync(query: str, max_results: int = 3):
     """Synchronous DuckDuckGo search using duckduckgo-search package."""

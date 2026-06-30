@@ -48,7 +48,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
+from datetime import UTC
+from typing import Any
 
 from .repository import SessionRepository
 
@@ -100,7 +101,7 @@ class SessionPersistenceBridge:
         mode: str,
         provider: str,
         aggressiveness: int = 5,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> None:
         """
         Persist a newly-created session.
@@ -176,8 +177,8 @@ class SessionPersistenceBridge:
         role: str,
         turn_type: str,
         content: str,
-        agent_id: Optional[str] = None,
-        agent_name: Optional[str] = None,
+        agent_id: str | None = None,
+        agent_name: str | None = None,
     ) -> None:
         """Append a turn to the durable conversation log."""
         try:
@@ -201,14 +202,14 @@ class SessionPersistenceBridge:
         session_id: str,
         *,
         verdict_text: str,
-        strongest: Optional[str] = None,
-        weakness: Optional[str] = None,
-        fix: Optional[str] = None,
-        investment_score: Optional[float] = None,
-        recommendation: Optional[str] = None,
+        strongest: str | None = None,
+        weakness: str | None = None,
+        fix: str | None = None,
+        investment_score: float | None = None,
+        recommendation: str | None = None,
         confidence_score: int = 0,
         signal: str = "MEDIUM",
-        charts: Optional[dict[str, Any]] = None,
+        charts: dict[str, Any] | None = None,
     ) -> None:
         """Persist the final verdict."""
         try:
@@ -254,8 +255,8 @@ class SessionPersistenceBridge:
 
 
 def _utcnow():
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc)
+    from datetime import datetime
+    return datetime.now(UTC)
 
 
 __all__ = ["SessionPersistenceBridge", "NON_PERSISTED_KEYS"]

@@ -5,13 +5,11 @@ Stores pitch history so agents can recall previous attempts and call out improve
 Falls back gracefully if DB is not configured.
 """
 
-import os
 import asyncio
-import uuid
-import json
+import os
 import time
+
 import requests
-from typing import Optional
 
 # Lazy-init so the app boots even if DB is not configured
 _vx_client = None
@@ -41,10 +39,9 @@ def _get_vecs_client():
             dimension=EMBEDDING_DIM
         )
         # Ensure we have an index for cosine similarity search
-        try:
+        import contextlib
+        with contextlib.suppress(Exception):
             _pitches_collection.create_index(measure=vecs.IndexMeasure.cosine_distance)
-        except Exception:
-            pass  # Index may already exist
 
         print("[DB] Connected to Supabase pgvector — pitch_history collection ready.")
         return _pitches_collection
@@ -53,7 +50,7 @@ def _get_vecs_client():
         return None
 
 
-def _embed_jina(text: str) -> Optional[list]:
+def _embed_jina(text: str) -> list | None:
     """Call Jina Embeddings API synchronously."""
     if not JINA_API_KEY:
         return None
@@ -77,7 +74,7 @@ def _embed_jina(text: str) -> Optional[list]:
         return None
 
 
-async def _embed_async(text: str) -> Optional[list]:
+async def _embed_async(text: str) -> list | None:
     """Async wrapper for Jina embedding call."""
     return await asyncio.to_thread(_embed_jina, text)
 
@@ -138,7 +135,7 @@ async def retrieve_past_pitches(pitch_summary: str, top_k: int = 2) -> list[dict
             include_value=True
         )
         past = []
-        for doc_id, distance, metadata in results:
+        for _doc_id, distance, metadata in results:
             similarity = 1 - distance  # cosine distance → similarity
             if similarity > 0.70:  # Only inject if genuinely similar
                 past.append({

@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -51,7 +51,7 @@ def _uuid() -> str:
 # ─── Enums (kept as strings for forward compat) ─────────────────
 
 
-class SessionStatus(str, enum.Enum):
+class SessionStatus(enum.StrEnum):
     """Lifecycle of a pitch session."""
 
     CREATED = "created"          # session_id minted, no pitch yet
@@ -65,7 +65,7 @@ class SessionStatus(str, enum.Enum):
     ERRORED = "errored"          # unrecoverable failure
 
 
-class TurnRole(str, enum.Enum):
+class TurnRole(enum.StrEnum):
     """Who produced this turn in the conversation."""
 
     PERSONA = "persona"          # panelist spoke
@@ -74,7 +74,7 @@ class TurnRole(str, enum.Enum):
     SYSTEM = "system"            # controller/system message
 
 
-class TurnType(str, enum.Enum):
+class TurnType(enum.StrEnum):
     """Sub-classification within a turn (matches legacy orchestrator types)."""
 
     QUESTION = "question"
@@ -93,7 +93,7 @@ class TurnType(str, enum.Enum):
     OBSERVER_UTTERANCE = "observer_utterance"
 
 
-class VerdictSignal(str, enum.Enum):
+class VerdictSignal(enum.StrEnum):
     """Top-level investment signal derived from the verdict."""
 
     STRONG = "STRONG"
@@ -111,15 +111,15 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    email: Mapped[Optional[str]] = mapped_column(String(320), unique=True, nullable=True)
-    name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
-    image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    email: Mapped[str | None] = mapped_column(String(320), unique=True, nullable=True)
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider: Mapped[str] = mapped_column(String(50), default="email", nullable=False)
-    provider_account_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    provider_account_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
-    sessions: Mapped[list["PitchSession"]] = relationship(
+    sessions: Mapped[list[PitchSession]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )
@@ -166,7 +166,7 @@ class PitchSession(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
 
     # Foreign key to user (nullable: anonymous sessions in Tier 0a)
-    user_id: Mapped[Optional[str]] = mapped_column(
+    user_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
@@ -175,8 +175,8 @@ class PitchSession(Base):
 
     # Inputs
     pitch_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    refined_pitch: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    corrected_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    refined_pitch: Mapped[str | None] = mapped_column(Text, nullable=True)
+    corrected_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Configuration
     mode: Mapped[str] = mapped_column(String(20), default="venture", nullable=False)
@@ -207,30 +207,30 @@ class PitchSession(Base):
     memory_history: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, default=list, nullable=False
     )
-    past_pitch_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    black_swan_insight: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    revised_pitch: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    past_pitch_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    black_swan_insight: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revised_pitch: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Timing
-    started_at: Mapped[Optional[datetime]] = mapped_column(
+    started_at: Mapped[datetime | None] = mapped_column(
         # Inherits DateTime from base. Nullable so it can be set on first event.
         nullable=True,
     )
-    completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # Relationships
-    user: Mapped[Optional["User"]] = relationship(back_populates="sessions")
-    turns: Mapped[list["PitchTurn"]] = relationship(
+    user: Mapped[User | None] = relationship(back_populates="sessions")
+    turns: Mapped[list[PitchTurn]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="PitchTurn.step_index",
     )
-    verdict: Mapped[Optional["PitchVerdict"]] = relationship(
+    verdict: Mapped[PitchVerdict | None] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
         uselist=False,
     )
-    revisions: Mapped[list["PitchRevision"]] = relationship(
+    revisions: Mapped[list[PitchRevision]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="PitchRevision.created_at",
@@ -264,12 +264,12 @@ class PitchTurn(Base):
     step_index: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # TurnRole value
     turn_type: Mapped[str] = mapped_column(String(40), nullable=False)  # TurnType value
-    agent_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
-    agent_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    agent_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     content: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
     # Relationships
-    session: Mapped["PitchSession"] = relationship(back_populates="turns")
+    session: Mapped[PitchSession] = relationship(back_populates="turns")
 
 
 # ─── Pitch Verdict ──────────────────────────────────────────────
@@ -293,11 +293,11 @@ class PitchVerdict(Base):
     verdict_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
     # Structured parts
-    strongest: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    weakness: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    fix: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    investment_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    recommendation: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    strongest: Mapped[str | None] = mapped_column(Text, nullable=True)
+    weakness: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fix: Mapped[str | None] = mapped_column(Text, nullable=True)
+    investment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    recommendation: Mapped[str | None] = mapped_column(String(60), nullable=True)
 
     # Aggregate scores
     confidence_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -309,7 +309,7 @@ class PitchVerdict(Base):
     charts: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
     # Relationships
-    session: Mapped["PitchSession"] = relationship(back_populates="verdict")
+    session: Mapped[PitchSession] = relationship(back_populates="verdict")
 
 
 # ─── Pitch Revision (the re-pitch loop) ─────────────────────────
@@ -335,7 +335,7 @@ class PitchRevision(Base):
     )
 
     # Relationships
-    session: Mapped["PitchSession"] = relationship(back_populates="revisions")
+    session: Mapped[PitchSession] = relationship(back_populates="revisions")
 
 
 # ─── Prompt Experiments (Tier-2c) ──────────────────────────────────
@@ -387,7 +387,7 @@ class PromptAssignment(Base):
     variant: Mapped[str] = mapped_column(String(50), nullable=False)
     assigned_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -413,7 +413,7 @@ class PromptOutcome(Base):
     metric_value: Mapped[float] = mapped_column(Float, nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -429,7 +429,7 @@ class ApiKey(Base):
     __tablename__ = "api_keys"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[Optional[str]] = mapped_column(
+    user_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
@@ -450,15 +450,15 @@ class ApiKey(Base):
 
     # Rate limit overrides (per-key, in requests per minute).
     # None means "use the default".
-    rate_limit_per_minute: Mapped[Optional[int]] = mapped_column(nullable=True)
+    rate_limit_per_minute: Mapped[int | None] = mapped_column(nullable=True)
 
     # Usage tracking
-    last_used_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(nullable=True)
     total_requests: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # Lifecycle
-    revoked_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     def to_dict(self, include_hash: bool = False) -> dict[str, Any]:
         d = super().to_dict()
@@ -469,4 +469,3 @@ class ApiKey(Base):
 
 # Update SessionRepository to know about API keys (Tier-2b)
 # We extend the existing SessionRepository interface with API-key methods.
-from .repository import SessionRepository  # noqa: E402  (circular-safe import at module level)

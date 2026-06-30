@@ -1,17 +1,27 @@
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.colors import HexColor, white, black, lightgrey
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable, PageBreak
-from reportlab.lib.units import mm
-from reportlab.lib.enums import TA_CENTER
-import io, base64
-import json
+import io
+
 import matplotlib
+from reportlab.lib.colors import HexColor, lightgrey
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import (
+    HRFlowable,
+    Image,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+
 # Use non-GUI backend
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-
 from orchestrator import AGENTS_CONFIG
+
 
 def create_score_chart(memory: dict) -> io.BytesIO:
     """Generate a performance score bar chart based on memory extraction."""
@@ -20,29 +30,29 @@ def create_score_chart(memory: dict) -> io.BytesIO:
     r_count = len(memory.get("risks", []))
     c_count = len(memory.get("claims", []))
     o_count = len(memory.get("opinions", []))
-    
+
     # Simple normalization math (1-10 scale)
     def normalize(val, factor=2): return min(10, max(1, 4 + (val * factor)))
-    
+
     scores = {
         "Strength": normalize(s_count, 1.5),
         "Risk Mitigation": min(10, max(1, 10 - (r_count * 1.5))),
         "Clarity": normalize(c_count, 1.2),
         "Panel Interest": normalize(o_count, 0.8)
     }
-    
+
     fig, ax = plt.subplots(figsize=(6, 3))
     colors = ['#047857', '#B91C1C', '#1E40AF', '#B45309']
-    
+
     bars = ax.bar(scores.keys(), scores.values(), color=colors, alpha=0.85)
     ax.set_ylim(0, 10)
     ax.set_yticks(range(0, 11, 2))
     ax.set_title('AI Strategic Evaluation Score', fontsize=12, fontweight='bold', pad=15)
     ax.grid(axis='y', linestyle='--', alpha=0.3)
-    
+
     # Add values on top
     for bar in bars:
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.2, 
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.2,
                 f'{int(bar.get_height())}/10', ha='center', va='bottom', fontsize=8)
 
     plt.tight_layout()
@@ -56,20 +66,20 @@ def create_risk_ratio_chart(memory: dict) -> io.BytesIO:
     """Generate a Risk vs Strength donut chart."""
     s_count = len(memory.get("strengths", []))
     r_count = len(memory.get("risks", []))
-    
+
     if s_count == 0 and r_count == 0:
         s_count, r_count = 1, 1 # Dummy for visual
-        
+
     labels = ['Strengths', 'Risks']
     sizes = [s_count, r_count]
     colors = ['#10B981', '#EF4444']
-    
+
     fig, ax = plt.subplots(figsize=(4, 4))
-    ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140, 
-           colors=colors, wedgeprops=dict(width=0.4, edgecolor='w'))
-    
+    ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140,
+           colors=colors, wedgeprops={'width': 0.4, 'edgecolor': 'w'})
+
     ax.set_title('Strategic Balance Overview', fontsize=10, fontweight='bold')
-    
+
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=150)
@@ -85,16 +95,16 @@ def create_participation_chart(conversation: list) -> io.BytesIO:
         if "pitcher" in turn.get("type", "").lower() or name.lower() == "pitcher":
             name = "Founder"
         counts[name] = counts.get(name, 0) + 1
-        
+
     names = list(counts.keys())
     values = list(counts.values())
-    
+
     fig, ax = plt.subplots(figsize=(6, 3))
     ax.barh(names, values, color='#6366F1', alpha=0.7)
     ax.set_xlabel('Message Frequency', fontsize=9)
     ax.set_title('Panel Participation Analysis', fontsize=11, fontweight='bold')
     ax.grid(axis='x', linestyle=':', alpha=0.5)
-    
+
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=150)
@@ -108,9 +118,9 @@ async def generate_pdf_report(session: dict) -> bytes:
     doc = SimpleDocTemplate(buffer, pagesize=A4,
                              topMargin=20*mm, bottomMargin=20*mm,
                              leftMargin=20*mm, rightMargin=20*mm)
-    
+
     styles = getSampleStyleSheet()
-    
+
     # Custom Brand Colors
     brand_blue = HexColor('#1E40AF') # Bold Blue
     danger_red = HexColor('#B91C1C') # Dark Red
@@ -121,37 +131,37 @@ async def generate_pdf_report(session: dict) -> bytes:
     slate_50 = HexColor('#F8FAFC')
 
     # Styles
-    title_style = ParagraphStyle('title', fontSize=26, textColor=slate_900, 
-                                parent=styles['Heading1'], alignment=TA_CENTER, 
+    title_style = ParagraphStyle('title', fontSize=26, textColor=slate_900,
+                                parent=styles['Heading1'], alignment=TA_CENTER,
                                 spaceAfter=15, fontName='Helvetica-Bold')
-    
-    h1_style = ParagraphStyle('h1', fontSize=16, textColor=brand_blue, 
-                             parent=styles['Heading2'], spaceBefore=15, spaceAfter=8, 
+
+    h1_style = ParagraphStyle('h1', fontSize=16, textColor=brand_blue,
+                             parent=styles['Heading2'], spaceBefore=15, spaceAfter=8,
                              fontName='Helvetica-Bold')
-    
-    h2_style = ParagraphStyle('h2', fontSize=13, textColor=slate_900, 
-                             parent=styles['Heading3'], spaceBefore=10, spaceAfter=5, 
+
+    h2_style = ParagraphStyle('h2', fontSize=13, textColor=slate_900,
+                             parent=styles['Heading3'], spaceBefore=10, spaceAfter=5,
                              fontName='Helvetica-Bold')
-    
-    body_style = ParagraphStyle('body', fontSize=11, textColor=slate_900, 
+
+    body_style = ParagraphStyle('body', fontSize=11, textColor=slate_900,
                                lineSpacing=1.2, spaceAfter=10)
-    
-    bullet_style = ParagraphStyle('bullet', parent=body_style, leftIndent=15, bulletIndent=5, 
+
+    bullet_style = ParagraphStyle('bullet', parent=body_style, leftIndent=15, bulletIndent=5,
                                  bulletText='•', spaceAfter=6)
 
     content = []
-    
+
     # --- PAGE 1: EXECUTIVE SUMMARY ---
     # 1. TITLE
     content.append(Paragraph("Pitch Evaluation Report", title_style))
     content.append(HRFlowable(width="100%", thickness=2, color=brand_blue, spaceAfter=10))
-    
+
     # 2. PITCH SUMMARY
     content.append(Paragraph("Executive Summary", h1_style))
     refined_pitch = session.get("refined_pitch") or session.get("pitch_summary", "No pitch data available.")
     content.append(Paragraph(refined_pitch, body_style))
     content.append(Spacer(1, 10))
-    
+
     # 3. PANEL OVERVIEW
     content.append(Paragraph("Panel Composition", h2_style))
     active_panel = session.get("domain", {}).get("active_panel", session.get("active_panel", []))
@@ -164,7 +174,7 @@ async def generate_pdf_report(session: dict) -> bytes:
                     Paragraph(f"<b>{cfg['name']}</b>", body_style),
                     Paragraph(cfg['role'], body_style)
                 ])
-        
+
         pt = Table(panel_data, colWidths=[50*mm, 120*mm])
         pt.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, -1), slate_50),
@@ -178,12 +188,12 @@ async def generate_pdf_report(session: dict) -> bytes:
     content.append(Paragraph("AI Evaluation Analytics", h1_style))
     memory = session.get("memory", {})
     conversation = session.get("conversation", [])
-    
+
     # Score Chart (Bar)
     score_buf = create_score_chart(memory)
     content.append(Image(score_buf, width=160*mm, height=80*mm))
     content.append(Spacer(1, 10))
-    
+
     # Donut + Participation in a table for side-by-side feel if possible, but Simple Table is easier
     chart_table_data = [
         [
@@ -195,14 +205,14 @@ async def generate_pdf_report(session: dict) -> bytes:
     ct.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
     content.append(ct)
     content.append(Spacer(1, 10))
-    
+
     content.append(PageBreak())
 
     # --- PAGE 2: STRATEGIC INSIGHTS ---
     # 4. KEY INSIGHTS
     if any(memory.get(k) for k in memory):
         content.append(Paragraph("Phase 1: Strategic Insights", h1_style))
-        
+
         insight_sections = [
             ("Strengths", "strengths", success_green, "✓"),
             ("Risks & Hazards", "risks", danger_red, "⚠"),
@@ -210,7 +220,7 @@ async def generate_pdf_report(session: dict) -> bytes:
             ("Contradictions", "contradictions", warning_gold, "⁈"),
             ("Topic Opinions", "opinions", slate_900, "•")
         ]
-        
+
         for title, key, color, icon in insight_sections:
             items = memory.get(key, [])
             if items:
@@ -229,17 +239,17 @@ async def generate_pdf_report(session: dict) -> bytes:
             role_text = ""
             if agent_id and agent_id in AGENTS_CONFIG:
                 role_text = f" ({AGENTS_CONFIG[agent_id]['role']})"
-            
+
             speaker_style = ParagraphStyle('speaker', fontSize=10, textColor=brand_blue, fontName='Helvetica-Bold')
             if "pitcher" in turn.get("type", "").lower() or "pitcher" in agent_name.lower():
                 speaker_style = ParagraphStyle('speaker_pitcher', fontSize=10, textColor=slate_600, fontName='Helvetica-Bold')
-            
+
             content_style = ParagraphStyle('c_body', fontSize=10, textColor=slate_900, leftIndent=5)
             conv_data.append([
                 Paragraph(f"{agent_name}{role_text}", speaker_style),
                 Paragraph(turn.get("content", ""), content_style)
             ])
-            
+
         t_conv = Table(conv_data, colWidths=[40*mm, 130*mm])
         t_conv.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -250,7 +260,7 @@ async def generate_pdf_report(session: dict) -> bytes:
 
     # 6. GAPS, VERDICT, BLACK SWAN - Continue...
     content.append(PageBreak())
-    
+
     # 6. CRITICAL GAPS
     reflection = session.get("reflection", {})
     missing = reflection.get("missing", [])
@@ -266,7 +276,7 @@ async def generate_pdf_report(session: dict) -> bytes:
     if verdict_parts or verdict:
         content.append(HRFlowable(width="100%", thickness=1, color=brand_blue, spaceBefore=20))
         content.append(Paragraph("Investment Verdict", h1_style))
-        
+
         if verdict_parts:
             v_items = [
                 ("Strongest Strategic Advantage", verdict_parts.get("strongest", ""), success_green),

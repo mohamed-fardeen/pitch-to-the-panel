@@ -612,6 +612,43 @@ export default function Home() {
     }
   };
 
+  const submitSkip = async () => {
+    console.log("[UI] answer skipped");
+    if (isSpeaking || currentlySpeaking) {
+      stopSpeaking();
+      turnQueueRef.current = [];
+      setIsSpeaking(false);
+    }
+
+    try {
+      const resp = await fetch(`${API_BASE}/conversation/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          message: "[SKIPPED]",
+          interrupt: false
+        })
+      });
+
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok || result.status !== "answer_received") {
+        setAwaitingUserInput(true);
+        setWaitingForAnswer(true);
+        setConnectionError("The panel was not ready for that answer yet. Please try again.");
+        return;
+      }
+
+      setAwaitingUserInput(false);
+      setWaitingForAnswer(false);
+      setManualText("");
+    } catch(e) {
+      console.error("Failed to skip answer:", e);
+      setAwaitingUserInput(true);
+      setWaitingForAnswer(true);
+    }
+  };
+
   const submitInterrupt = async () => {
     if (!manualText) return;
     const msg = manualText;
@@ -1162,6 +1199,7 @@ export default function Home() {
                           isStreaming={isStreaming}
                           activeAgent={activeAgent}
                           onSetAwaitingUserInput={setAwaitingUserInput}
+                          onSkip={submitSkip}
                         />
                     </div>
 

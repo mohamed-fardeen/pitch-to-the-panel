@@ -1,42 +1,39 @@
-import json
 import asyncio
-import os
+import contextlib
 import copy
-from typing import AsyncGenerator, Tuple, Dict, List, Optional
-from pydantic import BaseModel, Field, field_validator
+import json
+import os
+from collections.abc import AsyncGenerator
+from typing import Literal
+
+# Load the catalog eagerly so AGENTS_CONFIG / AGENT_GOALS / OCEAN_PROFILES
+# are plain dicts at module level (as the legacy code expects).
+from agents.loader import AGENT_GOALS, AGENTS_CONFIG, OCEAN_PROFILES  # noqa: E402,F401
+from graph import FocusGroupState, build_agentic_graph
 from prompts import (
+    BASE_SYSTEM_PROMPT,
+    BLACK_SWAN_PROMPT,
     CONTROLLER_PROMPT,
-    REFLECTION_PROMPT,
+    FACT_CHECK_PROMPT,
+    MEMORY_UPDATE_PROMPT,
+    MODE_INSTRUCTIONS,
+    MODE_PROMPTS,
+    PERSONA_ANCHORS,
     PERSONA_PROMPT,
     PITCH_REFINER_PROMPT,
-    FINAL_ANALYST_PROMPT,
-    BLACK_SWAN_PROMPT,
-    OCEAN_PROFILES,
-    PERSONA_ANCHORS,
-    BASE_SYSTEM_PROMPT,
-    MODE_PROMPTS,
-    MODE_INSTRUCTIONS,
-    MEMORY_UPDATE_PROMPT,
-    extract_json,
-    JUDGE_CONVERSATION_PROMPT,
+    REFLECTION_PROMPT,
     SEARCH_TOOL_PROMPT,
-    FACT_CHECK_PROMPT
+    extract_json,
 )
+from pydantic import BaseModel, Field, field_validator
 
 # ─── Agent personas (Tier 0d) ──────────────────────────────────────
 # The persona catalog is now loaded from YAML files at apps/api/agents/
 # personas/. The dicts below are computed from the YAMLs at import time.
 # Edit the YAMLs to change a persona — no code changes needed.
 # See docs/personas.md.
-
 from services.llm import llm_provider
-from graph import FocusGroupState, build_agentic_graph
-from typing import Literal, Annotated
-import operator
 
-# Load the catalog eagerly so AGENTS_CONFIG / AGENT_GOALS / OCEAN_PROFILES
-# are plain dicts at module level (as the legacy code expects).
-from agents.loader import AGENTS_CONFIG, AGENT_GOALS, OCEAN_PROFILES  # noqa: E402,F401
 
 class VerdictSchema(BaseModel):
     strongest_point: str = Field(description="The strongest strategic advantage")
@@ -47,9 +44,9 @@ class VerdictSchema(BaseModel):
 
 class ControllerDecision(BaseModel):
     action: Literal["ask_persona", "ask_pitcher", "use_tool", "reflect", "end_session"]
-    target: Optional[str] = "vc"
+    target: str | None = "vc"
     input: dict = {}
-    reason: Optional[str] = ""
+    reason: str | None = ""
 
     @field_validator("input", mode="before")
     @classmethod
@@ -89,38 +86,38 @@ async def check_manual_interrupt(state: FocusGroupState, session: dict) -> dict 
     events = session.get("events", {})
     if "interrupt_event" in events and events["interrupt_event"].is_set():
         events["interrupt_event"].clear()
-        
+
         if session.get("force_end"):
             return {"action": "end_session"}
 
         msg = session.get("interrupt_message", "Manual interruption")
-        
+
         last_agent_id = (
             session.get("interrupted_agent_id")
             or state.get("last_persona_used")
             or "interviewer"
         )
         agent = AGENTS_CONFIG.get(last_agent_id, {"name": "Panelist", "role": "Expert"})
-        
+
         import random
         acks = [
-            f"Hold on — let's hear from the founder. Go ahead.",
-            f"Looks like you want to add something — please, go ahead.",
-            f"Wait, I see the founder jumping in. Let's pause and listen.",
-            f"Ah, an interjection. Please continue, we're listening.",
-            f"Interesting point, please explain that further."
+            "Hold on — let's hear from the founder. Go ahead.",
+            "Looks like you want to add something — please, go ahead.",
+            "Wait, I see the founder jumping in. Let's pause and listen.",
+            "Ah, an interjection. Please continue, we're listening.",
+            "Interesting point, please explain that further."
         ]
         ack_text = random.choice(acks)
-        
+
         print(f"[INTERRUPT] {last_agent_id} acknowledging: {ack_text}")
-        
+
         ack_turn = {
             "type": "persona_response",
             "agent_id": last_agent_id,
             "agent_name": agent["name"],
             "content": ack_text
         }
-        
+
         founder_turn = {
             "type": "pitcher_interrupt",
             "agent_name": "Founder (Jump In)",
@@ -160,7 +157,7 @@ Respond as {agent["name"]}. Briefly acknowledge the founder's point, answer or r
         }
 
         session["interrupted_agent_id"] = None
-        
+
         return {
             "conversation": [ack_turn, founder_turn, response_turn],
             "action": "ask_persona",
@@ -183,7 +180,7 @@ async def perform_initial_domain_search(domain_info: dict) -> str:
     """Pre-search context for the controller."""
     query = f"{domain_info.get('sub_domain', '')} competitors India 2026 pricing"
     competitor_context = "LIVE COMPETITOR RESEARCH (searched just now):\n"
-    
+
     if tavily_client:
         try:
             results = await asyncio.to_thread(tavily_client.search, query=query, max_results=3)
@@ -197,7 +194,8 @@ async def perform_initial_domain_search(domain_info: dict) -> str:
     try:
         from services.search import search_competitors
         ddg_results = await search_competitors(query, max_results=3)
-        if not ddg_results: return ""
+        if not ddg_results:
+            return ""
         for r in ddg_results:
             competitor_context += f"- {r.get('title')}: {r.get('body')}\n"
         return competitor_context
@@ -208,17 +206,20 @@ MEMORY_FILE = "pitcher_memory.json"
 
 def load_pitcher_memory(pitcher_id: str) -> dict | None:
     try:
-        with open(MEMORY_FILE, "r") as f:
+        with open(MEMORY_FILE) as f:
             return json.load(f).get(pitcher_id)
     except Exception:
         return None
 
 def save_pitcher_memory(pitcher_id: str, session_data: dict, verdict: str = ""):
-    if not pitcher_id: return
+    if not pitcher_id:
+        return
     try:
         try:
-            with open(MEMORY_FILE, "r") as f: memory = json.load(f)
-        except Exception: memory = {}
+            with open(MEMORY_FILE) as f:
+                memory = json.load(f)
+        except Exception:
+            memory = {}
         memory[pitcher_id] = {
             "last_pitch_summary": session_data.get("summary", session_data.get("hitl_data", {}).get("corrected_summary", "")),
             "domain": session_data.get("domain", {}),
@@ -226,34 +227,38 @@ def save_pitcher_memory(pitcher_id: str, session_data: dict, verdict: str = ""):
             "verdict": verdict,
             "pitch_count": memory.get(pitcher_id, {}).get("pitch_count", 0) + 1
         }
-        with open(MEMORY_FILE, "w") as f: json.dump(memory, f, indent=2)
-    except Exception: pass
+        with open(MEMORY_FILE, "w") as f:
+            json.dump(memory, f, indent=2)
+    except Exception:
+        pass
 
 
 async def generate_radar_chart_image(scores: dict) -> str:
     try:
+        import base64
+        import io
+
         import matplotlib.pyplot as plt
         import numpy as np
-        import io
-        import base64
 
         labels = list(scores.keys())
-        if "reasoning" in labels: labels.remove("reasoning")
-        
-        values = [scores[l] for l in labels]
+        if "reasoning" in labels:
+            labels.remove("reasoning")
+
+        values = [scores[label_key] for label_key in labels]
         num_vars = len(labels)
 
         angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
         values += values[:1]
         angles += angles[:1]
 
-        fig, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
+        fig, ax = plt.subplots(figsize=(6, 6), subplot_kw={"polar": True})
         ax.fill(angles, values, color='red', alpha=0.25)
         ax.plot(angles, values, color='red', linewidth=2)
         ax.set_yticklabels([])
         ax.set_xticks(angles[:-1])
         ax.set_xticklabels(labels)
-        
+
         buf = io.BytesIO()
         plt.savefig(buf, format='png', transparent=True)
         buf.seek(0)
@@ -265,7 +270,7 @@ async def generate_radar_chart_image(scores: dict) -> str:
 
 async def get_scoring_radar(pitch: str, round1: dict, provider: str) -> dict:
     prompt = """You are a startup pitch evaluator. Score this pitch on 5 dimensions based on the pitch and the panel's reactions. Output ONLY valid JSON:
-    
+
     {
       "problem_clarity": 7,
       "market_size": 6,
@@ -283,12 +288,12 @@ async def get_scoring_radar(pitch: str, round1: dict, provider: str) -> dict:
         scores = json.loads(response[start:end])
     except Exception:
         scores = {"problem_clarity":5, "market_size":5, "differentiation":5, "feasibility":5, "founder_credibility":5}
-    
+
     try:
         b64 = await generate_radar_chart_image(scores)
     except Exception:
         b64 = None
-        
+
     return {"scores": scores, "image": b64}
 
 def sse_event(event_type: str, data: dict) -> dict:
@@ -298,7 +303,7 @@ async def safe_wait(event, timeout=10.0):
     try:
         if not event.is_set():
             await asyncio.wait_for(event.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print(f"[TIMEOUT] safe_wait exceeded {timeout}s. Continuing automatically.")
     finally:
         event.clear()
@@ -307,10 +312,10 @@ def build_conversation_context(session: dict, last_n: int = None) -> str:
     conversation = session.get("conversation", [])
     if not conversation:
         return "No exchanges yet."
-    
+
     if last_n is not None:
         conversation = conversation[-last_n:]
-    
+
     lines = []
     for turn in conversation:
         t = turn["type"]
@@ -347,7 +352,7 @@ def build_conversation_context(session: dict, last_n: int = None) -> str:
             lines.append(f"{name} asked: {content}")
         elif t == "tool_output":
             lines.append(f"{name}: {content}")
-    
+
     return "\n".join(lines)
 
 
@@ -358,22 +363,32 @@ def map_ocean_to_behavior(profile: dict) -> str:
     extraversion = profile.get("extraversion", 0.5)
     agreeableness = profile.get("agreeableness", 0.5)
     neuroticism = profile.get("neuroticism", 0.5)
-    
-    if openness > 0.7: behaviors.append("explores ideas and speculates")
-    elif openness < 0.3: behaviors.append("prefers proven ideas")
-        
-    if conscientiousness > 0.7: behaviors.append("methodical and detail-oriented")
-    elif conscientiousness < 0.3: behaviors.append("spontaneous and flexible")
 
-    if extraversion > 0.7: behaviors.append("vocal and energetic")
-    elif extraversion < 0.3: behaviors.append("quiet and observant")
+    if openness > 0.7:
+        behaviors.append("explores ideas and speculates")
+    elif openness < 0.3:
+        behaviors.append("prefers proven ideas")
 
-    if agreeableness < 0.3: behaviors.append("direct and confrontational")
-    elif agreeableness > 0.7: behaviors.append("supportive and cooperative")
-        
-    if neuroticism > 0.7: behaviors.append("risk-sensitive and cautious")
-    elif neuroticism < 0.3: behaviors.append("calm and confident")
-        
+    if conscientiousness > 0.7:
+        behaviors.append("methodical and detail-oriented")
+    elif conscientiousness < 0.3:
+        behaviors.append("spontaneous and flexible")
+
+    if extraversion > 0.7:
+        behaviors.append("vocal and energetic")
+    elif extraversion < 0.3:
+        behaviors.append("quiet and observant")
+
+    if agreeableness < 0.3:
+        behaviors.append("direct and confrontational")
+    elif agreeableness > 0.7:
+        behaviors.append("supportive and cooperative")
+
+    if neuroticism > 0.7:
+        behaviors.append("risk-sensitive and cautious")
+    elif neuroticism < 0.3:
+        behaviors.append("calm and confident")
+
     return ", ".join(behaviors) if behaviors else "neutral and analytical"
 
 async def pitch_refiner_node(state: FocusGroupState):
@@ -385,11 +400,11 @@ async def pitch_refiner_node(state: FocusGroupState):
             event = session["events"]["summary_approved"]
             try:
                 await asyncio.wait_for(event.wait(), timeout=60.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 print("[TIMEOUT] Auto-approving summary")
-            
+
             event.clear()
-            
+
             approved_summary = session.get("hitl_data", {}).get("corrected_summary")
             if approved_summary:
                 state["pitch_summary"] = approved_summary
@@ -414,21 +429,22 @@ async def pitch_refiner_node(state: FocusGroupState):
         pitch=state['pitch_summary'],
         focus=foci.get(mode, "clarity, value prop")
     )
-    
+
     refined = await llm_provider.generate_response(
         "You are a professional startup pitch editor.", prompt, state["provider"], stream=False
     )
-    
+
     session = sessions.get(state["session_id"])
     if session:
-        if "hitl_data" not in session: session["hitl_data"] = {}
+        if "hitl_data" not in session:
+            session["hitl_data"] = {}
         session["hitl_data"]["summary"] = refined
         session["refined_pitch"] = refined
         session["events"]["summary_approved"].clear()
 
         # Phase 3: Retrieve past pitches for historical context injection
         try:
-            from services.embeddings import retrieve_past_pitches, format_past_pitches_for_context
+            from services.embeddings import format_past_pitches_for_context, retrieve_past_pitches
             past = await retrieve_past_pitches(refined, top_k=2)
             if past:
                 history_context = format_past_pitches_for_context(past)
@@ -441,7 +457,7 @@ async def pitch_refiner_node(state: FocusGroupState):
                 }))
         except Exception as e:
             print(f"[DB] Past pitch retrieval skipped: {e}")
-    
+
     return {
         "refined_pitch": refined,
         "awaiting_pitch_confirmation": True
@@ -452,8 +468,8 @@ async def controller_node(state: FocusGroupState):
 
     if force_end_signal(session):
         return check_force_end()
-    
-    if state.get("interrupt") == True:
+
+    if state.get("interrupt"):
         return {
             "action": "ask_pitcher",
             "awaiting_user_input": True,
@@ -467,7 +483,7 @@ async def controller_node(state: FocusGroupState):
         return interrupt_result
 
     if session.get("action") == "end_session":
-        session["action"] = None 
+        session["action"] = None
         return {
             "action": "end_session",
             "awaiting_user_input": False,
@@ -560,7 +576,7 @@ async def controller_node(state: FocusGroupState):
             nc = active_panel[(idx + 1) % len(active_panel)]
         else:
             nc = active_panel[0]
-            
+
         return _ctrl_return(
             "ask_persona",
             {
@@ -627,7 +643,8 @@ async def controller_node(state: FocusGroupState):
                 idx = active_panel.index(last_used) if last_used in active_panel else -1
                 decision_data = {"action": "ask_persona", "target": active_panel[(idx + 1) % len(active_panel)], "reason": "spark suppresses tools"}
             elif mode == "reality" and tool != "fact_check":
-                if not decision_data.get("input"): decision_data["input"] = {}
+                if not decision_data.get("input"):
+                    decision_data["input"] = {}
                 decision_data["input"]["tool"] = "fact_check"
 
         if next_priority and decision_data.get("action") in ["ask_persona", "ask_pitcher"]:
@@ -668,7 +685,7 @@ async def controller_node(state: FocusGroupState):
         })
         return state_updates
 
-    except Exception as e:
+    except Exception:
         fallback_personas = state.get("domain", {}).get("active_panel", [])
         if not fallback_personas:
             fallback_personas = ["vc", "expert", "enthusiastic"]
@@ -712,13 +729,13 @@ async def persona_node(state: FocusGroupState):
             "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [],
             "concerns": [], "agent_opinions": [], "disagreements": []
         }
-    
+
     agent_mem = agent_memory.get(persona_id, {})
     priority_context = action_input.get("priority_context", "")
 
     agent_config = AGENTS_CONFIG.get(persona_id, AGENTS_CONFIG["vc"])
     persona_anchor = PERSONA_ANCHORS.get(persona_id, "")
-    
+
     ocean = OCEAN_PROFILES.get(persona_id, OCEAN_PROFILES["vc"])
     behavior_text = map_ocean_to_behavior(ocean)
 
@@ -729,7 +746,7 @@ async def persona_node(state: FocusGroupState):
     )
 
     global_mem  = state.get("memory", {})
-    
+
     if priority_context:
         agent_angle_map = {
             "vc": f"From your ROI perspective, the key blocker is: {priority_context}",
@@ -758,7 +775,7 @@ async def persona_node(state: FocusGroupState):
     own_risks     = agent_mem.get("risks", [])
     own_strengths = agent_mem.get("strengths", [])
     agent_confidence = len(own_strengths) - len(own_risks)
-    
+
     if agent_confidence < 0:
         tone_instruction = aggression_str + "Your OWN memory has flagged serious risks. Be sharper, more skeptical, and press harder."
     elif agent_confidence > 0:
@@ -786,11 +803,11 @@ async def persona_node(state: FocusGroupState):
         formatted_concerns = agent_mem.get("concerns", [])
         formatted_opinions = agent_mem.get("agent_opinions", [])
         formatted_disagreements = agent_mem.get("disagreements", [])
-        
+
         agent_concerns_str = "\n".join([f"⚠ {c}" for c in formatted_concerns[:3]]) if formatted_concerns else ""
         agent_opinions_str = "\n".join([f"💭 {o}" for o in formatted_opinions[:3]]) if formatted_opinions else ""
         agent_disagreements_str = "\n".join([f"⚖ {d}" for d in formatted_disagreements[:2]]) if formatted_disagreements else ""
-        
+
         agent_memory_formatted = f"""DETAILED PRIVATE STATE:
 Concerns: {agent_concerns_str or "(none)"}
 Opinions: {agent_opinions_str or "(none)"}
@@ -817,7 +834,7 @@ Full State: {json.dumps(agent_mem)}"""
         # Extract signals to show what the agent is "thinking" about
         signals = []
         if agent_mem:
-            for k, v in list(agent_mem.items())[-2:]:
+            for _k, v in list(agent_mem.items())[-2:]:
                 signals.append(f"Recalling: {str(v)[:60]}...")
         elif global_mem.get("risks"):
             signals.append(f"Evaluating Risk: {global_mem['risks'][-1][:60]}...")
@@ -838,14 +855,16 @@ Full State: {json.dumps(agent_mem)}"""
             "name": agent_config["name"]
         }))
 
-    
+
     try:
         full_response = await llm_provider.generate_response(
             f"Respond as {agent_config['name']}. You MUST push toward your goal. Do not be reactive — steer.",
             prompt, state["provider"], stream=False
         )
-    except Exception as e:
+    except Exception:
         full_response = "That is a complex point. Let me think about its implications."
+
+    is_question = full_response.strip().endswith("?")
 
     new_turn = {
         "type": "persona_response",
@@ -861,6 +880,7 @@ Full State: {json.dumps(agent_mem)}"""
         "current_speaker": agent_config["name"],
         "last_persona_used": persona_id,
         "is_speaking": False,
+        "awaiting_user_input": is_question,
         "agent_memory": { persona_id: agent_memory[persona_id] }
     }
 
@@ -876,10 +896,10 @@ async def pitcher_node(state: FocusGroupState):
 
     if state.get("awaiting_user_input"):
         event = session["events"]["answer_event"]
-        
+
         if not event.is_set():
             await event.wait()
-        
+
         event.clear()
 
         if session.get("action") == "end_session":
@@ -893,12 +913,15 @@ async def pitcher_node(state: FocusGroupState):
         ans = session.get("pending_answer", "")
         session["pending_answer"] = ""
 
+        if ans == "[SKIPPED]":
+            ans = "(Pitcher skipped the question.)"
+
         new_turn = {
             "type": "pitcher_response",
             "agent_name": "Pitcher",
             "content": ans
         }
-        
+
         return {
             "conversation": [new_turn],
             "awaiting_user_input": False,
@@ -908,14 +931,14 @@ async def pitcher_node(state: FocusGroupState):
     target_persona = state["action_input"].get("target", "interviewer")
     agent_name = AGENTS_CONFIG.get(target_persona, {"name": "The Interviewer"})["name"]
     question = state["action_input"].get("question", "What do you think about the points raised?")
-    
+
     new_turn = {
         "type": "interviewer_question",
         "agent_id": target_persona,
         "agent_name": agent_name,
         "content": question
     }
-    
+
     return {
         "conversation": [new_turn],
         "awaiting_user_input": True,
@@ -935,10 +958,10 @@ async def tool_node(state: FocusGroupState):
     action_input = state["action_input"]
     tool_type = action_input.get("tool", "search")
     query = action_input.get("query", state["pitch_summary"])
-    
+
     result_content = ""
     source = ""
-    
+
     if tool_type == "search":
         search_success = False
         if tavily_client:
@@ -948,7 +971,7 @@ async def tool_node(state: FocusGroupState):
                 for r in results.get("results", []):
                     raw_results += f"- {r.get('title', '')}: {r.get('content', '')}\n"
                     source = r.get("url", "web")
-                
+
                 if raw_results.strip():
                     result_content = await llm_provider.generate_response(
                         SEARCH_TOOL_PROMPT,
@@ -959,7 +982,7 @@ async def tool_node(state: FocusGroupState):
                     search_success = True
             except Exception as e:
                 print(f"[TAVILY ERROR] {e}")
-        
+
         if not search_success:
             try:
                 from services.search import search_competitors
@@ -968,7 +991,7 @@ async def tool_node(state: FocusGroupState):
                 for r in ddg_results:
                     raw_results += f"- {r.get('title', '')}: {r.get('body', '')}\n"
                     source = r.get("href", "web")
-                
+
                 if not raw_results.strip():
                     result_content = "Search returned no results."
                 else:
@@ -1030,7 +1053,7 @@ async def memory_update_node(state: FocusGroupState):
 
     try:
         updated_memory, updated_agent_mem = await update_memory(state, last_turn)
-        
+
         existing = state.get("agent_memory", {}).copy()
         for agent_id, data in updated_agent_mem.items():
             if agent_id not in existing:
@@ -1061,20 +1084,20 @@ async def memory_update_node(state: FocusGroupState):
     except Exception as e:
         print(f"[MEMORY UPDATE] FAILED: {str(e)} -> Using fallback memory, Step Count -> {new_step_count}")
         return {
-            "memory": state.get("memory", {}), 
+            "memory": state.get("memory", {}),
             "agent_memory": state.get("agent_memory", {}),
             "step_count": new_step_count
         }
 
-async def update_memory(state: FocusGroupState, new_turn: dict) -> Tuple[dict, dict]:
+async def update_memory(state: FocusGroupState, new_turn: dict) -> tuple[dict, dict]:
     base_memory = copy.deepcopy(state.get("memory", {
         "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [], "covered_topics": []
     }))
     agent_memory = copy.deepcopy(state.get("agent_memory", {}))
-    
+
     tool_type = new_turn.get("type", "tool")
     agent_id = new_turn.get("agent_id") or f"tool_{tool_type}"
-    
+
     formatted_prompt = MEMORY_UPDATE_PROMPT.format(
         content=new_turn.get("content", ""),
         agent_name=new_turn.get("agent_name", "Unknown"),
@@ -1086,10 +1109,10 @@ async def update_memory(state: FocusGroupState, new_turn: dict) -> Tuple[dict, d
             "Extract memory signals.", formatted_prompt, state["provider"], stream=False
         )
         updated = extract_json(response)
-        
+
         mapping = {
-            "risk": "risks", "strength": "strengths", "claim": "claims", 
-            "contradiction": "contradictions", "opinion": "opinions", 
+            "risk": "risks", "strength": "strengths", "claim": "claims",
+            "contradiction": "contradictions", "opinion": "opinions",
             "topic": "covered_topics", "topics": "covered_topics",
             "concern": "concerns",
             "agent_concern": "concerns",
@@ -1099,7 +1122,7 @@ async def update_memory(state: FocusGroupState, new_turn: dict) -> Tuple[dict, d
         for k, v in mapping.items():
             if k in updated and v not in updated:
                 updated[v] = updated[k]
-        
+
         if not updated:
             updated = {
                 "opinions": [new_turn.get("content", "")[:80]]
@@ -1110,34 +1133,37 @@ async def update_memory(state: FocusGroupState, new_turn: dict) -> Tuple[dict, d
             for key in ["claims", "risks", "strengths", "contradictions", "opinions"]:
                 new_items = updated.get(key, [])
                 if isinstance(new_items, list):
-                    if key not in mem: mem[key] = []
+                    if key not in mem:
+                        mem[key] = []
                     for item in new_items:
                         if item and str(item).strip():
                             item_clean = str(item).strip()
                             if item_clean not in mem[key]:
                                 mem[key].append(item_clean)
                     mem[key] = mem[key][-15:]
-            
+
             if include_topics:
                 new_topics = updated.get("covered_topics", [])
                 if isinstance(new_topics, list):
-                    if "covered_topics" not in mem: mem["covered_topics"] = []
+                    if "covered_topics" not in mem:
+                        mem["covered_topics"] = []
                     for t in new_topics:
                         if t and str(t).strip() and t not in mem["covered_topics"]:
                             mem["covered_topics"].append(str(t).strip())
                 mem["covered_topics"] = mem["covered_topics"][-50:]
 
             for key in ["claims", "risks", "strengths", "contradictions", "opinions"]:
-                if key not in mem: mem[key] = []
+                if key not in mem:
+                    mem[key] = []
                 if isinstance(mem[key], list):
                     mem[key] = mem[key][-20:]
-            
+
             if include_topics and "covered_topics" not in mem:
                 mem["covered_topics"] = []
             return mem
-            
+
         updated_base = apply_update(base_memory, include_topics=True)
-        
+
         if agent_id:
             if agent_id not in agent_memory:
                 agent_memory[agent_id] = {
@@ -1148,30 +1174,29 @@ async def update_memory(state: FocusGroupState, new_turn: dict) -> Tuple[dict, d
                     "notes": [],
                     "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [], "disagreements": []
                 }
-            
+
             agent_memory[agent_id] = apply_update(agent_memory[agent_id], include_topics=False)
-            
-            if "stance" in updated: 
+
+            if "stance" in updated:
                 agent_memory[agent_id]["stance"] = updated["stance"]
             if "confidence" in updated:
-                try:
+                with contextlib.suppress(BaseException):
                     agent_memory[agent_id]["confidence"] = int(updated["confidence"])
-                except:
-                    pass
-            
+
             for key in ["concerns", "positives", "disagreements"]:
                 src_key = "agent_disagreements" if key == "disagreements" else key
                 new_items = updated.get(src_key, [])
                 if isinstance(new_items, list):
-                    if key not in agent_memory[agent_id]: agent_memory[agent_id][key] = []
+                    if key not in agent_memory[agent_id]:
+                        agent_memory[agent_id][key] = []
                     for item in new_items:
                         item_clean = str(item).strip()
                         if item_clean and item_clean not in agent_memory[agent_id][key]:
                             agent_memory[agent_id][key].append(item_clean)
                     agent_memory[agent_id][key] = agent_memory[agent_id][key][-10:]
-            
+
         return updated_base, agent_memory
-    except Exception as e:
+    except Exception:
         return base_memory, agent_memory
 
 async def reflection_node(state: FocusGroupState):
@@ -1187,7 +1212,7 @@ async def reflection_node(state: FocusGroupState):
     mode = state.get("mode", "venture")
     context = build_conversation_context({"conversation": state.get("conversation", [])})
     user_input = json.dumps({"conversation": context, "memory": state.get("memory", {})})
-    
+
     try:
         formatted_sys = REFLECTION_PROMPT.format(mode=mode)
         response = await llm_provider.generate_response(formatted_sys, user_input, state["provider"], stream=False)
@@ -1196,7 +1221,7 @@ async def reflection_node(state: FocusGroupState):
             "reflection": reflection_data,
             "last_reflection_step": state.get("step_count", 0)
         }
-    except Exception as e:
+    except Exception:
         return {"last_reflection_step": state.get("step_count", 0)}
 
 async def final_node(state: FocusGroupState):
@@ -1217,7 +1242,7 @@ async def final_node(state: FocusGroupState):
         return {"action": "end_session", "final_report": report}
 
     mode = state.get("mode", "venture")
-    context = build_conversation_context({"conversation": state.get("conversation", [])})
+    build_conversation_context({"conversation": state.get("conversation", [])})
     memory = state.get("memory", {})
 
     strengths = memory.get("strengths", [])
@@ -1296,7 +1321,7 @@ async def final_node(state: FocusGroupState):
         black_swan = session.get("black_swan_insight", "")
         if black_swan:
             report["black_swan_insight"] = black_swan
-        
+
         session["final_report"] = report
         session["verdict"] = verdict_text
         session["verdict_parts"] = verdict_parts
@@ -1312,7 +1337,7 @@ async def final_node(state: FocusGroupState):
             ))
         except Exception as e:
             print(f"[DB] Pitch save skipped: {e}")
-        
+
     return {"action": "end_session", "final_report": report}
 
 async def handle_interrupt_node(state: FocusGroupState):
@@ -1324,7 +1349,7 @@ async def handle_interrupt_node(state: FocusGroupState):
         "reason": "user_interrupt",
         "agent_id": last_agent_id
     }))
-        
+
     import random
     acks = [
         "Looks like the pitcher wants to jump in. Go ahead.",
@@ -1333,22 +1358,22 @@ async def handle_interrupt_node(state: FocusGroupState):
         "Hold on, I see the founder jumping in."
     ]
     ack_text = random.choice(acks)
-    
+
     agent = AGENTS_CONFIG.get(last_agent_id, AGENTS_CONFIG["vc"])
-    
+
     ack_turn = {
         "type": "persona_response",
         "agent_id": last_agent_id,
         "agent_name": agent["name"],
         "content": ack_text
     }
-    
+
     session["is_speaking"] = False
-    
+
     return {
         "conversation": [ack_turn],
         "pitcher_interrupt": False,
-        "awaiting_user_input": True, 
+        "awaiting_user_input": True,
         "pitcher_message": msg,
         "is_speaking": False,
         "action": "ask_pitcher"
@@ -1381,27 +1406,27 @@ You MUST output ONLY a valid JSON object matching this exact schema, with NO mar
         )
         json_data = extract_json(verdict_json)
         verdict_obj = VerdictSchema(**json_data)
-        
+
         verdict_str = f"Recommendation: {verdict_obj.recommendation} (Score: {verdict_obj.investment_score}/10)\n\n" \
                       f"This idea shows strong potential but we noted some areas of improvement. See the detailed breakdown."
-        
+
         parts = {
             "strongest": verdict_obj.strongest_point,
             "weakness": verdict_obj.biggest_weakness,
             "fix": verdict_obj.fix_before_next_pitch
         }
         return verdict_str, parts
-    except Exception as e:
+    except Exception:
         return "Evaluation completed.", {
             "strongest": "", "weakness": "", "fix": ""
         }
 
 async def generate_report_charts(strength_score, risk_score, clarity_score, confidence_score):
     try:
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import io
         import base64
+        import io
+
+        import matplotlib.pyplot as plt
 
         charts = {}
 
@@ -1416,7 +1441,7 @@ async def generate_report_charts(strength_score, risk_score, clarity_score, conf
         ax.set_title('Pitch Evaluation Scores')
         ax.grid(axis='y', alpha=0.3)
 
-        for bar, value in zip(bars, values):
+        for bar, value in zip(bars, values, strict=False):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
                    f'{value}', ha='center', va='bottom', fontweight='bold')
 
@@ -1494,7 +1519,7 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
         session.setdefault("domain", {})["active_panel"] = _derived_panel
 
     _panel_from_session = session.get("active_panel", [])
-    
+
     initial_state: FocusGroupState = {
         "session_id": session_id,
         "pitch_summary": session["pitch_summary"],
@@ -1527,7 +1552,7 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
         "reflection": { "missing": [], "confidence": 0.0, "should_continue": True },
         "conversation": []
     }
-    
+
     graph = build_agentic_graph(
         pitch_refiner_node, controller_node, persona_node, pitcher_node,
         tool_node, reflection_node, final_node, memory_update_node,
@@ -1548,7 +1573,8 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
                 state_step_counter += 1
                 node_name = list(event.keys())[0]
                 update = event[node_name]
-                if not update: continue
+                if not update:
+                    continue
 
                 m = session.get("memory", {})
                 agent_id = update.get("last_persona_used") or session.get("last_persona_used")
@@ -1585,12 +1611,13 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
                 ]:
                     if key in update:
                         if key == "memory_history":
-                            if key not in session: session[key] = []
+                            if key not in session:
+                                session[key] = []
                             session[key].extend(update[key])
                         elif key in ["memory", "agent_memory"]:
                             curr_val = json.dumps(session.get(key, {}), sort_keys=True)
                             new_val  = json.dumps(update[key], sort_keys=True)
-                            
+
                             if curr_val != new_val:
                                 if key == "agent_memory":
                                     existing = session.get("agent_memory", {})
@@ -1601,7 +1628,8 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
                                             if isinstance(data, dict):
                                                 for k, v in data.items():
                                                     if isinstance(v, list):
-                                                        if k not in existing[aid]: existing[aid][k] = []
+                                                        if k not in existing[aid]:
+                                                            existing[aid][k] = []
                                                         for item in v:
                                                             if item not in existing[aid][k]:
                                                                 existing[aid][k].append(item)
@@ -1610,7 +1638,7 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
                                     session["agent_memory"] = existing
                                 else:
                                     session[key] = update[key]
-                                    
+
                                 await queue.put(sse_event("memory_update", {
                                     "memory": session.get("memory", {}),
                                     "agent_memory": session.get("agent_memory", {}),
@@ -1624,16 +1652,12 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
                         await queue.put(sse_event("agent_turn", turn))
                         session["conversation"].append(turn)
 
-                    if (
-                        node_name == "pitcher"
-                        and update.get("awaiting_user_input")
-                        and update["conversation"][-1].get("type") == "interviewer_question"
-                    ):
+                    if update.get("awaiting_user_input") and len(update.get("conversation", [])) > 0:
                         question_turn = update["conversation"][-1]
                         await queue.put(sse_event("waiting_for_pitcher", {
                             "session_id": session_id,
                             "agent_id": question_turn.get("agent_id"),
-                            "agent_name": question_turn.get("agent_name"),
+                            "agent_name": question_turn.get("agent_name", question_turn.get("role")),
                             "question": question_turn.get("content", ""),
                         }))
 
@@ -1668,7 +1692,8 @@ async def stream_echochamber(session_id: str, session: dict, provider: str, mode
     try:
         while True:
             item = await queue.get()
-            if item is _SENTINEL: break
+            if item is _SENTINEL:
+                break
             yield item
     finally:
         session["sse_queue"] = None
@@ -1691,8 +1716,9 @@ async def stream_meta_analysis(session_id: str, session: dict, provider: str):
         if session.get("final_report") is not None:
             session["final_report"]["black_swan_insight"] = raw
         yield sse_event("black_swan_report", {"insight": raw})
-    except Exception: pass
-    
+    except Exception:
+        pass
+
     session["phase"] = "verdict"
     yield sse_event("conversation_complete", {"session_id": session_id})
     async for event in stream_verdict_from_conversation(session_id, session, provider):
@@ -1715,7 +1741,7 @@ async def stream_verdict_from_conversation(session_id: str, session: dict, provi
     # Fallback path: regenerate structured verdict using VerdictSchema
     if not full_verdict:
         transcript = build_conversation_context(session)
-        user_input = f"PITCH SUMMARY:\n{session['pitch_summary']}\n\nTRANSCRIPT:\n{transcript}"
+        f"PITCH SUMMARY:\n{session['pitch_summary']}\n\nTRANSCRIPT:\n{transcript}"
         full_verdict, parts = await generate_verdict_text(
             session.get("memory", {}).get("strengths", []),
             session.get("memory", {}).get("risks", []),
@@ -1778,7 +1804,8 @@ def ensure_report_for_session(session: dict, verdict_text: str = "") -> dict:
 
 async def handle_verdict_pushback(session_id: str, pushback: str, provider: str, sessions: dict):
     session = sessions.get(session_id)
-    if not session: return
+    if not session:
+        return
     prompt = f"Verdict:\n{session.get('verdict', '')}\n\nPushback:\n{pushback}"
     yield sse_event("pushback_response_start", {"session_id": session_id})
     full_resp = ""
@@ -1787,7 +1814,8 @@ async def handle_verdict_pushback(session_id: str, pushback: str, provider: str,
         async for text in stream:
             full_resp += text
             yield sse_event("agent_token", {"agent_id": "judge", "token": text, "type": "pushback_response"})
-    except Exception: pass
+    except Exception:
+        pass
     session["verdict_final"] = session["verdict"] + "\n\nJudge Response: " + full_resp
     yield sse_event("session_complete", {"session_id": session_id, "verdict": session["verdict_final"]})
 

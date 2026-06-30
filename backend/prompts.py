@@ -74,8 +74,8 @@ ENFORCE: Stay in character. No generic responses.
 
 === FORCE CONFLICT (CRITICAL) ===
 - Refer to previous agents by name.
-- Agents MUST agree OR disagree explicitly. 
-- At least 30% of your responses MUST contain disagreement. 
+- Agents MUST agree OR disagree explicitly.
+- At least 30% of your responses MUST contain disagreement.
 - Use phrases like: "I disagree with Ravi...", "That assumption is risky...", "This won't scale because..."
 
 === RESPONSE STYLE (STRICT) ===
@@ -148,7 +148,7 @@ INSTRUCTIONS:
    - 'disagreements': Specific panelists THIS AGENT openly disagreed with. Be explicit. (e.g., "Disagrees with Priya on user retention claim")
 
 3. BIAS TOWARD SPECIFICITY & OPINION:
-   - Capture disagreements even if subtle. 
+   - Capture disagreements even if subtle.
    - Capture Sharp opinions.
 
 4. Return ONLY valid JSON. NO markdown, NO text before/after.
@@ -204,10 +204,7 @@ OUTPUT: Only the refined text.
 # templates. Edit the YAMLs to change a persona anchor.
 
 from agents.loader import (  # noqa: E402
-    AGENT_GOALS,
     AGENTS_CONFIG,
-    OCEAN_PROFILES,
-    get_catalog,
 )
 
 PERSONA_ANCHORS = {
@@ -261,6 +258,18 @@ Output:
 - Reason: 1-2 sentences
 """
 
+ANSWER_COACH_PROMPT = """
+You are coaching a startup founder who was just asked a tough question by a panelist.
+
+PITCH SUMMARY:
+{pitch_summary}
+
+PANELIST: {agent_name} ({agent_role})
+QUESTION: {question}
+
+Provide 3 quick, punchy hints to the founder on how they should think about answering this question.
+"""
+
 BLACK_SWAN_PROMPT = """
 You are a 'Black Swan' analyst. Your job is to find the non-obvious, high-impact risks or opportunities that everyone else missed in this {mode} session.
 
@@ -287,5 +296,5 @@ def extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
         start = text.find("{", start + 1)
-    print(f"[JSON EXTRACTION ERROR] No valid JSON object found in text")
+    print("[JSON EXTRACTION ERROR] No valid JSON object found in text")
     return {}

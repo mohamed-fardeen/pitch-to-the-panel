@@ -1,0 +1,646 @@
+﻿E402 Module level import not at top of file
+  --> main.py:86:1
+   |
+84 | # any open DB connections cleanly. Both are no-ops for the in-memory
+85 | # repository.
+86 | from contextlib import asynccontextmanager
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+E402 Module level import not at top of file
+   --> main.py:133:1
+    |
+131 | app.router.lifespan_context = lifespan
+132 |
+133 | import re
+    | ^^^^^^^^^
+    |
+
+F821 Undefined name `e`
+   --> main.py:368:61
+    |
+366 |     except ValueError:
+367 |         async def validation_error():
+368 |             yield json.dumps({"event": "error", "data": str(e)})
+    |                                                             ^
+369 |         return EventSourceResponse(validation_error())
+    |
+
+E402 Module level import not at top of file
+   --> main.py:666:1
+    |
+664 |     }
+665 |
+666 | from fastapi import Response
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+667 | from pdf_export import generate_pdf_report
+    |
+
+E402 Module level import not at top of file
+   --> main.py:667:1
+    |
+666 | from fastapi import Response
+667 | from pdf_export import generate_pdf_report
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+   --> main.py:707:9
+    |
+705 |     except Exception as e:
+706 |         print(f"[PDF ERROR] {e}")
+707 |         raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {str(e)}")
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+708 |
+709 | # ΓöÇΓöÇΓöÇ Tier-1c: Public Verdict Pages ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    |
+
+B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+   --> main.py:947:9
+    |
+945 |         }
+946 |     except Exception as e:
+947 |         raise HTTPException(status_code=500, detail=f"Revision failed: {str(e)}")
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+   --> main.py:961:9
+    |
+959 |         return {"pitchers": {}, "count": 0}
+960 |     except Exception as e:
+961 |         raise HTTPException(status_code=500, detail=str(e))
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+962 |
+963 | @app.delete("/api/memory/{pitcher_id}")
+    |
+
+B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+   --> main.py:978:9
+    |
+976 |         raise
+977 |     except FileNotFoundError:
+978 |         raise HTTPException(status_code=404, detail="No memory file exists yet")
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+979 |     except Exception as e:
+980 |         raise HTTPException(status_code=500, detail=str(e))
+    |
+
+B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+   --> main.py:980:9
+    |
+978 |         raise HTTPException(status_code=404, detail="No memory file exists yet")
+979 |     except Exception as e:
+980 |         raise HTTPException(status_code=500, detail=str(e))
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+981 |
+982 | @app.delete("/api/memory")
+    |
+
+B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+   --> main.py:990:9
+    |
+988 |         return {"status": "cleared"}
+989 |     except Exception as e:
+990 |         raise HTTPException(status_code=500, detail=str(e))
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+E402 Module level import not at top of file
+   --> main.py:996:1
+    |
+996 | import hashlib
+    | ^^^^^^^^^^^^^^
+997 | import secrets
+998 | from datetime import UTC, datetime
+    |
+
+E402 Module level import not at top of file
+   --> main.py:997:1
+    |
+996 | import hashlib
+997 | import secrets
+    | ^^^^^^^^^^^^^^
+998 | from datetime import UTC, datetime
+    |
+
+E402 Module level import not at top of file
+   --> main.py:998:1
+    |
+996 | import hashlib
+997 | import secrets
+998 | from datetime import UTC, datetime
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+F811 Redefinition of unused `OCEAN_PROFILES` from line 11
+  --> orchestrator.py:21:5
+   |
+19 |     MODE_INSTRUCTIONS,
+20 |     MODE_PROMPTS,
+21 |     OCEAN_PROFILES,
+   |     ^^^^^^^^^^^^^^ `OCEAN_PROFILES` redefined here
+22 |     PERSONA_ANCHORS,
+23 |     PERSONA_PROMPT,
+   |
+  ::: orchestrator.py:11:55
+   |
+ 9 | # Load the catalog eagerly so AGENTS_CONFIG / AGENT_GOALS / OCEAN_PROFILES
+10 | # are plain dicts at module level (as the legacy code expects).
+11 | from agents.loader import AGENT_GOALS, AGENTS_CONFIG, OCEAN_PROFILES  # noqa: E402,F401
+   |                                                       -------------- previous definition of `OCEAN_PROFILES` here
+12 | from graph import FocusGroupState, build_agentic_graph
+13 | from prompts import (
+   |
+help: Remove definition: `OCEAN_PROFILES`
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:198:27
+    |
+196 |         from services.search import search_competitors
+197 |         ddg_results = await search_competitors(query, max_results=3)
+198 |         if not ddg_results: return ""
+    |                           ^
+199 |         for r in ddg_results:
+200 |             competitor_context += f"- {r.get('title')}: {r.get('body')}\n"
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:215:22
+    |
+214 | def save_pitcher_memory(pitcher_id: str, session_data: dict, verdict: str = ""):
+215 |     if not pitcher_id: return
+    |                      ^
+216 |     try:
+217 |         try:
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:218:40
+    |
+216 |     try:
+217 |         try:
+218 |             with open(MEMORY_FILE) as f: memory = json.load(f)
+    |                                        ^
+219 |         except Exception: memory = {}
+220 |         memory[pitcher_id] = {
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:219:25
+    |
+217 |         try:
+218 |             with open(MEMORY_FILE) as f: memory = json.load(f)
+219 |         except Exception: memory = {}
+    |                         ^
+220 |         memory[pitcher_id] = {
+221 |             "last_pitch_summary": session_data.get("summary", session_data.get("hitl_data", {}).get("corrected_summary", "")),
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:227:41
+    |
+225 |             "pitch_count": memory.get(pitcher_id, {}).get("pitch_count", 0) + 1
+226 |         }
+227 |         with open(MEMORY_FILE, "w") as f: json.dump(memory, f, indent=2)
+    |                                         ^
+228 |     except Exception: pass
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:228:21
+    |
+226 |         }
+227 |         with open(MEMORY_FILE, "w") as f: json.dump(memory, f, indent=2)
+228 |     except Exception: pass
+    |                     ^
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:240:33
+    |
+239 |         labels = list(scores.keys())
+240 |         if "reasoning" in labels: labels.remove("reasoning")
+    |                                 ^
+241 |
+242 |         values = [scores[l] for l in labels]
+    |
+
+E741 Ambiguous variable name: `l`
+   --> orchestrator.py:242:33
+    |
+240 |         if "reasoning" in labels: labels.remove("reasoning")
+241 |
+242 |         values = [scores[l] for l in labels]
+    |                                 ^
+243 |         num_vars = len(labels)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:361:22
+    |
+359 |     neuroticism = profile.get("neuroticism", 0.5)
+360 |
+361 |     if openness > 0.7: behaviors.append("explores ideas and speculates")
+    |                      ^
+362 |     elif openness < 0.3: behaviors.append("prefers proven ideas")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:362:24
+    |
+361 |     if openness > 0.7: behaviors.append("explores ideas and speculates")
+362 |     elif openness < 0.3: behaviors.append("prefers proven ideas")
+    |                        ^
+363 |
+364 |     if conscientiousness > 0.7: behaviors.append("methodical and detail-oriented")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:364:31
+    |
+362 |     elif openness < 0.3: behaviors.append("prefers proven ideas")
+363 |
+364 |     if conscientiousness > 0.7: behaviors.append("methodical and detail-oriented")
+    |                               ^
+365 |     elif conscientiousness < 0.3: behaviors.append("spontaneous and flexible")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:365:33
+    |
+364 |     if conscientiousness > 0.7: behaviors.append("methodical and detail-oriented")
+365 |     elif conscientiousness < 0.3: behaviors.append("spontaneous and flexible")
+    |                                 ^
+366 |
+367 |     if extraversion > 0.7: behaviors.append("vocal and energetic")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:367:26
+    |
+365 |     elif conscientiousness < 0.3: behaviors.append("spontaneous and flexible")
+366 |
+367 |     if extraversion > 0.7: behaviors.append("vocal and energetic")
+    |                          ^
+368 |     elif extraversion < 0.3: behaviors.append("quiet and observant")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:368:28
+    |
+367 |     if extraversion > 0.7: behaviors.append("vocal and energetic")
+368 |     elif extraversion < 0.3: behaviors.append("quiet and observant")
+    |                            ^
+369 |
+370 |     if agreeableness < 0.3: behaviors.append("direct and confrontational")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:370:27
+    |
+368 |     elif extraversion < 0.3: behaviors.append("quiet and observant")
+369 |
+370 |     if agreeableness < 0.3: behaviors.append("direct and confrontational")
+    |                           ^
+371 |     elif agreeableness > 0.7: behaviors.append("supportive and cooperative")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:371:29
+    |
+370 |     if agreeableness < 0.3: behaviors.append("direct and confrontational")
+371 |     elif agreeableness > 0.7: behaviors.append("supportive and cooperative")
+    |                             ^
+372 |
+373 |     if neuroticism > 0.7: behaviors.append("risk-sensitive and cautious")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:373:25
+    |
+371 |     elif agreeableness > 0.7: behaviors.append("supportive and cooperative")
+372 |
+373 |     if neuroticism > 0.7: behaviors.append("risk-sensitive and cautious")
+    |                         ^
+374 |     elif neuroticism < 0.3: behaviors.append("calm and confident")
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:374:27
+    |
+373 |     if neuroticism > 0.7: behaviors.append("risk-sensitive and cautious")
+374 |     elif neuroticism < 0.3: behaviors.append("calm and confident")
+    |                           ^
+375 |
+376 |     return ", ".join(behaviors) if behaviors else "neutral and analytical"
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:423:38
+    |
+421 |     session = sessions.get(state["session_id"])
+422 |     if session:
+423 |         if "hitl_data" not in session: session["hitl_data"] = {}
+    |                                      ^
+424 |         session["hitl_data"]["summary"] = refined
+425 |         session["refined_pitch"] = refined
+    |
+
+E701 Multiple statements on one line (colon)
+   --> orchestrator.py:629:50
+    |
+627 | ΓÇª         decision_data = {"action": "ask_persona", "target": active_panel[(idx + 1) % len(active_panel)], "reason": "spark suppresseΓÇª
+628 | ΓÇª     elif mode == "reality" and tool != "fact_check":
+629 | ΓÇª         if not decision_data.get("input"): decision_data["input"] = {}
+    |                                            ^
+630 | ΓÇª         decision_data["input"]["tool"] = "fact_check"
+    |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1112:38
+     |
+1110 |                 new_items = updated.get(key, [])
+1111 |                 if isinstance(new_items, list):
+1112 |                     if key not in mem: mem[key] = []
+     |                                      ^
+1113 |                     for item in new_items:
+1114 |                         if item and str(item).strip():
+     |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1123:51
+     |
+1121 |                 new_topics = updated.get("covered_topics", [])
+1122 |                 if isinstance(new_topics, list):
+1123 |                     if "covered_topics" not in mem: mem["covered_topics"] = []
+     |                                                   ^
+1124 |                     for t in new_topics:
+1125 |                         if t and str(t).strip() and t not in mem["covered_topics"]:
+     |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1130:34
+     |
+1129 |             for key in ["claims", "risks", "strengths", "contradictions", "opinions"]:
+1130 |                 if key not in mem: mem[key] = []
+     |                                  ^
+1131 |                 if isinstance(mem[key], list):
+1132 |                     mem[key] = mem[key][-20:]
+     |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1163:57
+     |
+1161 |                 new_items = updated.get(src_key, [])
+1162 |                 if isinstance(new_items, list):
+1163 |                     if key not in agent_memory[agent_id]: agent_memory[agent_id][key] = []
+     |                                                         ^
+1164 |                     for item in new_items:
+1165 |                         item_clean = str(item).strip()
+     |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1548:30
+     |
+1546 |                 node_name = list(event.keys())[0]
+1547 |                 update = event[node_name]
+1548 |                 if not update: continue
+     |                              ^
+1549 |
+1550 |                 m = session.get("memory", {})
+     |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1585:50
+     |
+1583 |                     if key in update:
+1584 |                         if key == "memory_history":
+1585 |                             if key not in session: session[key] = []
+     |                                                  ^
+1586 |                             session[key].extend(update[key])
+1587 |                         elif key in ["memory", "agent_memory"]:
+     |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1601:82
+     |
+1599 | ΓÇª                     for k, v in data.items():
+1600 | ΓÇª                         if isinstance(v, list):
+1601 | ΓÇª                             if k not in existing[aid]: existing[aid][k] = []
+     |                                                        ^
+1602 | ΓÇª                             for item in v:
+1603 | ΓÇª                                 if item not in existing[aid][k]:
+     |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1668:33
+     |
+1666 |         while True:
+1667 |             item = await queue.get()
+1668 |             if item is _SENTINEL: break
+     |                                 ^
+1669 |             yield item
+1670 |     finally:
+     |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1691:21
+     |
+1689 |             session["final_report"]["black_swan_insight"] = raw
+1690 |         yield sse_event("black_swan_report", {"insight": raw})
+1691 |     except Exception: pass
+     |                     ^
+1692 |
+1693 |     session["phase"] = "verdict"
+     |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1778:19
+     |
+1776 | async def handle_verdict_pushback(session_id: str, pushback: str, provider: str, sessions: dict):
+1777 |     session = sessions.get(session_id)
+1778 |     if not session: return
+     |                   ^
+1779 |     prompt = f"Verdict:\n{session.get('verdict', '')}\n\nPushback:\n{pushback}"
+1780 |     yield sse_event("pushback_response_start", {"session_id": session_id})
+     |
+
+E701 Multiple statements on one line (colon)
+    --> orchestrator.py:1787:21
+     |
+1785 |             full_resp += text
+1786 |             yield sse_event("agent_token", {"agent_id": "judge", "token": text, "type": "pushback_response"})
+1787 |     except Exception: pass
+     |                     ^
+1788 |     session["verdict_final"] = session["verdict"] + "\n\nJudge Response: " + full_resp
+1789 |     yield sse_event("session_complete", {"session_id": session_id, "verdict": session["verdict_final"]})
+     |
+
+F821 Undefined name `ApiKey`
+  --> persistence\in_memory.py:64:35
+   |
+62 |         self._session_verdicts: dict[str, PitchVerdict] = {}
+63 |         # Tier-2b: API keys
+64 |         self._api_keys: dict[str, ApiKey] = {}  # by key id
+   |                                   ^^^^^^
+65 |         self._api_key_by_hash: dict[str, str] = {}  # hash -> key id
+66 |         # Tier-2c: Prompt experiments
+   |
+
+F821 Undefined name `PromptExperiment`
+  --> persistence\in_memory.py:67:38
+   |
+65 |         self._api_key_by_hash: dict[str, str] = {}  # hash -> key id
+66 |         # Tier-2c: Prompt experiments
+67 |         self._experiments: dict[str, PromptExperiment] = {}  # by name
+   |                                      ^^^^^^^^^^^^^^^^
+68 |         # Outcomes: keyed by (experiment_name, metric_name), value is
+69 |         # list of (variant, assignment_id, session_id, value).
+   |
+
+F821 Undefined name `ApiKey`
+   --> persistence\in_memory.py:402:10
+    |
+400 |         expires_at: Any | None = None,
+401 |         rate_limit_per_minute: int | None = None,
+402 |     ) -> ApiKey:
+    |          ^^^^^^
+403 |         import uuid as _uuid_lib
+404 |         from datetime import datetime
+    |
+
+F821 Undefined name `ApiKey`
+   --> persistence\in_memory.py:424:59
+    |
+422 |         return key
+423 |
+424 |     async def get_api_key_by_hash(self, key_hash: str) -> ApiKey | None:
+    |                                                           ^^^^^^
+425 |         from datetime import datetime
+426 |         key_id = self._api_key_by_hash.get(key_hash)
+    |
+
+F821 Undefined name `ApiKey`
+   --> persistence\in_memory.py:439:71
+    |
+437 |         return key
+438 |
+439 |     async def list_api_keys(self, user_id: str | None = None) -> list[ApiKey]:
+    |                                                                       ^^^^^^
+440 |         rows = list(self._api_keys.values())
+441 |         if user_id is not None:
+    |
+
+F821 Undefined name `PromptExperiment`
+   --> persistence\in_memory.py:467:27
+    |
+466 |     async def create_prompt_experiment(
+467 |         self, experiment: PromptExperiment
+    |                           ^^^^^^^^^^^^^^^^
+468 |     ) -> PromptExperiment:
+469 |         from datetime import datetime
+    |
+
+F821 Undefined name `PromptExperiment`
+   --> persistence\in_memory.py:468:10
+    |
+466 |     async def create_prompt_experiment(
+467 |         self, experiment: PromptExperiment
+468 |     ) -> PromptExperiment:
+    |          ^^^^^^^^^^^^^^^^
+469 |         from datetime import datetime
+470 |         if not experiment.id:
+    |
+
+F821 Undefined name `PromptExperiment`
+   --> persistence\in_memory.py:479:10
+    |
+477 |     async def get_prompt_experiment_by_name(
+478 |         self, name: str
+479 |     ) -> PromptExperiment | None:
+    |          ^^^^^^^^^^^^^^^^
+480 |         return self._experiments.get(name)
+    |
+
+F821 Undefined name `PromptExperiment`
+   --> persistence\in_memory.py:483:27
+    |
+482 |     async def update_prompt_experiment(
+483 |         self, experiment: PromptExperiment
+    |                           ^^^^^^^^^^^^^^^^
+484 |     ) -> PromptExperiment:
+485 |         from datetime import datetime
+    |
+
+F821 Undefined name `PromptExperiment`
+   --> persistence\in_memory.py:484:10
+    |
+482 |     async def update_prompt_experiment(
+483 |         self, experiment: PromptExperiment
+484 |     ) -> PromptExperiment:
+    |          ^^^^^^^^^^^^^^^^
+485 |         from datetime import datetime
+486 |         if experiment.name not in self._experiments:
+    |
+
+F821 Undefined name `timezone`
+   --> persistence\models.py:390:38
+    |
+388 |     assigned_at: Mapped[datetime] = mapped_column(
+389 |         DateTime(timezone=True),
+390 |         default=lambda: datetime.now(timezone.utc),
+    |                                      ^^^^^^^^
+391 |         nullable=False,
+392 |     )
+    |
+
+F821 Undefined name `timezone`
+   --> persistence\models.py:416:38
+    |
+414 |     recorded_at: Mapped[datetime] = mapped_column(
+415 |         DateTime(timezone=True),
+416 |         default=lambda: datetime.now(timezone.utc),
+    |                                      ^^^^^^^^
+417 |         nullable=False,
+418 |     )
+    |
+
+SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+  --> services\db.py:42:9
+   |
+40 |           )
+41 |           # Ensure we have an index for cosine similarity search
+42 | /         try:
+43 | |             _pitches_collection.create_index(measure=vecs.IndexMeasure.cosine_distance)
+44 | |         except Exception:
+45 | |             pass  # Index may already exist
+   | |________________^
+46 |
+47 |           print("[DB] Connected to Supabase pgvector ΓÇö pitch_history collection ready.")
+   |
+help: Replace `try`-`except`-`pass` with `with contextlib.suppress(Exception): ...`
+
+SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+   --> services\embeddings.py:155:13
+    |
+153 |               # Create an IVFFlat index for cosine similarity (lists=100 is a
+154 |               # common default for datasets under 1M rows)
+155 | /             try:
+156 | |                 await conn.execute(text(
+157 | |                     """
+158 | |                     CREATE INDEX IF NOT EXISTS pitch_embeddings_embedding_idx
+159 | |                     ON pitch_embeddings
+160 | |                     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)
+161 | |                     """
+162 | |                 ))
+163 | |             except Exception:
+164 | |                 # Index creation can fail on small tables; that's OK
+165 | |                 pass
+    | |____________________^
+166 |           _pgvector_initialized = True
+167 |           _pgvector_collection = "pgvector"  # marker
+    |
+help: Replace `try`-`except`-`pass` with `with contextlib.suppress(Exception): ...`
+
+Found 60 errors.

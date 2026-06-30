@@ -19,6 +19,7 @@ interface LiveFeedProps {
   isStreaming?: boolean;
   activeAgent?: { id: string, name: string } | null;
   onSetAwaitingUserInput?: (val: boolean) => void;
+  onSkip?: () => void;
 }
 
 export function LiveFeed({ 
@@ -36,7 +37,8 @@ export function LiveFeed({
   currentQuestion,
   isStreaming,
   activeAgent: streamAgent,
-  onSetAwaitingUserInput
+  onSetAwaitingUserInput,
+  onSkip
 }: LiveFeedProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -182,6 +184,12 @@ export function LiveFeed({
                 className="w-16 h-16 rounded-full bg-[#006948] hover:bg-[#005a3e] text-white flex items-center justify-center shadow-xl shadow-emerald-900/20 disabled:opacity-30 disabled:grayscale transition-all active:scale-95"
               >
                 <span className="material-symbols-outlined text-2xl">send</span>
+              </button>
+              <button 
+                onClick={onSkip}
+                className="h-16 px-6 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 flex items-center justify-center shadow-md transition-all active:scale-95 font-medium whitespace-nowrap"
+              >
+                Skip
               </button>
             </div>
           </div>

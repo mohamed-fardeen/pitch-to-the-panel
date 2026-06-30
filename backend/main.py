@@ -1,29 +1,38 @@
-from fastapi import FastAPI, Request, HTTPException, Header
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
-from sse_starlette.sse import EventSourceResponse
-import json
 import asyncio
+import hashlib
+import json
 import logging
 import os
+import re
+import secrets
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from observability import (
+    flush_traces,
+    init_sentry,
+    is_tracing_enabled,
+)
 from orchestrator import (
-    sessions,
-    handle_verdict_pushback,
-    get_scoring_radar,
-    save_pitcher_memory,
+    AGENTS_CONFIG,
+    ensure_report_for_session,
     generate_fact_check,
     generate_rebuttal_response,
+    get_scoring_radar,
+    handle_verdict_pushback,
+    sessions,
     stream_echochamber,
-    ensure_report_for_session,
-    AGENTS_CONFIG
 )
-from services.llm import llm_provider
-from persistence import get_repository
+from persistence import get_repository, init_repository_schema
+from persistence.database import dispose_engine
 from persistence.sync import SessionPersistenceBridge
-from persistence.models import ApiKey, VerdictSignal
+from prompts import ANSWER_COACH_PROMPT
+from pydantic import BaseModel, Field
 from rate_limit import install_rate_limiter
+from services.llm import llm_provider
+from sse_starlette.sse import EventSourceResponse
 
 # ─── Logging configuration (Tier 0f) ─────────────────────────────
 _LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -85,14 +94,12 @@ app.add_middleware(
 # On startup we initialise the persistence layer. On shutdown we close
 # any open DB connections cleanly. Both are no-ops for the in-memory
 # repository.
-from contextlib import asynccontextmanager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     try:
-        from persistence import init_repository_schema
         await init_repository_schema()
         logger.info("Persistence schema ready.")
     except Exception as e:
@@ -101,7 +108,6 @@ async def lifespan(app: FastAPI):
         logger.warning("Persistence schema init skipped: %s", e)
     # Tier 1a: Langfuse LLM tracing (no-op in dev)
     try:
-        from observability import is_tracing_enabled
         if is_tracing_enabled():
             logger.info("Langfuse tracing ENABLED.")
         else:
@@ -110,19 +116,16 @@ async def lifespan(app: FastAPI):
         pass
     # Tier 1b: Sentry error tracking (no-op in dev)
     try:
-        from observability import init_sentry
         init_sentry()
     except Exception as e:
         logger.warning("Sentry init skipped: %s", e)
     yield
     # Shutdown
     try:
-        from persistence.database import dispose_engine
         await dispose_engine()
     except Exception as e:
         logger.warning("Engine dispose skipped: %s", e)
     try:
-        from observability import flush_traces
         flush_traces()
     except Exception as e:
         logger.debug("Trace flush skipped: %s", e)
@@ -132,7 +135,11 @@ async def lifespan(app: FastAPI):
 # lose the CORS middleware behavior.
 app.router.lifespan_context = lifespan
 
-import re
+
+def _utcnow() -> datetime:
+    """Current UTC time. Used for API key expiry, etc."""
+    return datetime.now(UTC)
+
 
 def sanitize_pitch_input(text: str) -> str:
     """
@@ -244,10 +251,10 @@ async def approve_summary(req: SummaryApproval):
     session = sessions.get(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     if "hitl_data" not in session:
         session["hitl_data"] = {}
-    
+
     session["hitl_data"]["corrected_summary"] = req.corrected_summary
     if "events" not in session:
         session["events"] = {
@@ -282,21 +289,21 @@ async def post_message(req: ConversationAnswer):
     if req.interrupt is False and session.get("awaiting_user_input"):
         session["pending_answer"] = message
         session["awaiting_user_input"] = False
-        
+
         print(f"[API] answer_event triggered: {message[:50]}...")
         if "events" in session and "answer_event" in session["events"]:
             session["events"]["answer_event"].set()
-        
+
         return {"status": "answer_received"}
 
     # ✅ FLOW 2: MANUAL INTERRUPTION (JUMP IN)
     if req.interrupt is True:
         session["interrupt_message"] = message
-        
+
         print(f"[API] interrupt_event triggered: {message[:50]}...")
         if "events" in session and "interrupt_event" in session["events"]:
             session["events"]["interrupt_event"].set()
-            
+
         return {"status": "interrupt_received"}
 
     print(f"[API] Unexpected message format or state. Awaiting: {session.get('awaiting_user_input')}, Interrupt: {req.interrupt}")
@@ -333,7 +340,7 @@ async def submit_rebuttal(req: RebuttalRequest):
     session = sessions.get(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     response = await generate_rebuttal_response(
         session, req.agent_id, req.agent_claim, req.rebuttal_text, req.provider
     )
@@ -365,8 +372,9 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
     try:
         pitch = sanitize_pitch_input(pitch)
     except ValueError as e:
+        _val_err = str(e)
         async def validation_error():
-            yield json.dumps({"event": "error", "data": str(e)})
+            yield json.dumps({"event": "error", "data": _val_err})
         return EventSourceResponse(validation_error())
 
     # FIXED: Mandatory mode validation (Fix 6)
@@ -415,7 +423,7 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
             # No running loop (shouldn't happen in a FastAPI handler, but
             # be defensive). The in-process cache still works.
             pass
-    
+
     async def event_generator():
         try:
             async for event in stream_echochamber(session_id, sessions[session_id], provider, mode):
@@ -423,11 +431,11 @@ async def main_stream(request: Request, session_id: str, pitch: str, provider: s
                     if "graph_task" in sessions[session_id]:
                         sessions[session_id]["graph_task"].cancel()
                     break
-                
+
                 yield event
         except Exception as e:
             yield json.dumps({"event": "error", "data": str(e)})
-            
+
     return EventSourceResponse(event_generator())
 
 @app.get("/api/stream/pushback")
@@ -447,20 +455,20 @@ async def end_conversation(req: EndConversationRequest):
     session = sessions.get(req.session_id)
     if not session:
         raise HTTPException(404, "Session not found")
-    
+
     # Ask the graph to finish at the next safe point. Do not mark the
     # session cancelled here: cancellation makes the SSE generator stop
     # before final_node can create the report.
     session["force_end"] = True
     session["action"] = "end_session"
-    
+
     # Trigger interrupt to stop current execution
     if "events" in session and "interrupt_event" in session["events"]:
         session["events"]["interrupt_event"].set()
-    
+
     if "events" in session and "answer_event" in session["events"]:
         session["events"]["answer_event"].set()
-        
+
     return {"status": "ending"}
 
 @app.post("/api/pitch/score")
@@ -538,7 +546,6 @@ async def translate_text(req: TranslateRequest):
     )
 
     try:
-        from services.llm import llm_provider
         translated = await llm_provider.generate_response(
             system_prompt=(
                 f"You are a professional pitch translator. "
@@ -586,7 +593,7 @@ async def list_supported_languages():
 @app.post("/api/conversation/coach")
 async def get_answer_coach(req: AnswerCoachRequest):
     """
-    Returns 3 thinking prompts to help the pitcher 
+    Returns 3 thinking prompts to help the pitcher
     answer the current agent's question.
     Called when pitcher clicks 'Help me answer this'
     OR when a weak answer is auto-detected.
@@ -594,22 +601,20 @@ async def get_answer_coach(req: AnswerCoachRequest):
     """
     if req.session_id not in sessions:
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail="Session not found"
         )
-    
+
     session = sessions[req.session_id]
     agent = AGENTS_CONFIG[req.agent_id]
-    
-    from prompts import ANSWER_COACH_PROMPT
-    
+
     prompt = ANSWER_COACH_PROMPT.format(
         question=req.question,
         agent_name=agent["name"],
         agent_role=agent["role"],
         pitch_summary=session["pitch_summary"]
     )
-    
+
     response = await llm_provider.generate_response(
         system_prompt="You are a pitch coach. Output EXACTLY 3 bullet points, each on a new line. "
                "Each bullet must start with 'Think about: '. No preamble, no conclusion.",
@@ -617,7 +622,7 @@ async def get_answer_coach(req: AnswerCoachRequest):
         provider=session.get("provider", "groq"),
         stream=False
     )
-    
+
     return {
         "coach_hints": response,
         "agent_name": agent["name"],
@@ -664,8 +669,6 @@ async def retry_answer(req: RetryAnswerRequest):
         "message": "Response cleared. You can respond again."
     }
 
-from pdf_export import generate_pdf_report
-from fastapi import Response
 
 @app.get("/api/session/{session_id}/report")
 async def get_report_data(session_id: str):
@@ -683,324 +686,6 @@ async def get_report_data(session_id: str):
             raise HTTPException(status_code=404, detail="Report not yet generated")
 
     return report_data
-
-@app.get("/api/session/{session_id}/report/pdf")
-async def get_report_pdf(session_id: str):
-    session = sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    if "final_report" not in session:
-        raise HTTPException(status_code=404, detail="Report not generated yet. Finish the panel discussion first.")
-
-    try:
-        pdf_bytes = await generate_pdf_report(session)
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename=pitch-report-{session_id}.pdf"
-            }
-        )
-    except Exception as e:
-        print(f"[PDF ERROR] {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {str(e)}")
-
-# ─── Tier-1c: Public Verdict Pages ─────────────────────────────────────
-# Anyone with a session_id can fetch a sanitized JSON representation
-# of the verdict for the /v/[id] shareable page. We strip the full
-# pitch content (which may contain private info) and return only the
-# structured verdict + a redacted summary. The session must be marked
-# is_public=true to be visible to non-owners.
-
-
-class PublicVerdictResponse(BaseModel):
-    """Response shape for /v/<session_id>/public. Safe to expose."""
-    session_id: str
-    is_public: bool
-    mode: str
-    created_at: str
-    # Sanitized — full pitch may contain private info, so we omit it
-    # unless explicitly opted-in (Tier 2)
-    pitch_excerpt: str  # first 200 chars only
-    verdict: dict
-    confidence_score: int
-    investment_signal: str
-
-
-@app.get("/v/{session_id}/public", response_model=PublicVerdictResponse)
-async def get_public_verdict(session_id: str):
-    """
-    Return a sanitized, public-safe representation of a verdict.
-
-    Used by the /v/[id] shareable page in the web app. The session
-    must be marked is_public=true (default) to be visible.
-
-    Returns 404 if the session doesn't exist or is private.
-    """
-    repo = get_repository()
-    session = await repo.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Verdict not found")
-    if not session.is_public:
-        raise HTTPException(status_code=404, detail="Verdict not found")
-    if session.status != "completed":
-        raise HTTPException(status_code=404, detail="Verdict not ready")
-
-    verdict = await repo.get_verdict(session_id)
-    if verdict is None:
-        raise HTTPException(status_code=404, detail="Verdict not yet generated")
-
-    # Truncate the pitch excerpt to the first 200 chars to avoid leaking
-    # the founder's full pitch to non-owners.
-    pitch_excerpt = (session.pitch_summary or "")[:200]
-    if len(session.pitch_summary or "") > 200:
-        pitch_excerpt += "..."
-
-    return PublicVerdictResponse(
-        session_id=session_id,
-        is_public=session.is_public,
-        mode=session.mode,
-        created_at=session.created_at.isoformat() if session.created_at else "",
-        pitch_excerpt=pitch_excerpt,
-        verdict={
-            "strongest": verdict.strongest or "",
-            "weakness": verdict.weakness or "",
-            "fix": verdict.fix or "",
-            "recommendation": verdict.recommendation or "",
-            "investment_score": verdict.investment_score,
-            "verdict_text": (verdict.verdict_text or "")[:1000],
-        },
-        confidence_score=verdict.confidence_score,
-        investment_signal=verdict.signal or "MEDIUM",
-    )
-
-
-@app.get("/v/{session_id}/og")
-async def get_verdict_og_tags(session_id: str):
-    """
-    Return OG meta tags as HTML for the public verdict page.
-
-    Used by social-media crawlers (Twitter, LinkedIn, etc.) to
-    generate rich previews. The frontend /v/[id] page also includes
-    these tags in its own <head>.
-    """
-    repo = get_repository()
-    session = await repo.get_session(session_id)
-    if session is None or not session.is_public or session.status != "completed":
-        # Return a generic 404 page (crawlers handle 404s gracefully)
-        raise HTTPException(status_code=404, detail="Verdict not found")
-
-    verdict = await repo.get_verdict(session_id)
-    if verdict is None:
-        raise HTTPException(status_code=404, detail="Verdict not found")
-
-    title = f"PanelMind Verdict: {verdict.signal or 'MEDIUM'} ({verdict.confidence_score}/100)"
-    description = (verdict.strongest or verdict.verdict_text or "PanelMind verdict")[:200]
-    base_url = os.getenv("NEXTAUTH_URL", "http://localhost:3000").rstrip("/")
-    url = f"{base_url}/v/{session_id}"
-
-    # Minimal HTML with just the meta tags — crawlers only read <head>
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>{title}</title>
-  <meta name="description" content="{_html_escape(description)}">
-
-  <!-- Open Graph -->
-  <meta property="og:title" content="{_html_escape(title)}">
-  <meta property="og:description" content="{_html_escape(description)}">
-  <meta property="og:url" content="{url}">
-  <meta property="og:type" content="article">
-  <meta property="og:site_name" content="PanelMind">
-
-  <!-- Twitter Card -->
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{_html_escape(title)}">
-  <meta name="twitter:description" content="{_html_escape(description)}">
-
-  <!-- Redirect to the real page (for human visitors) -->
-  <meta http-equiv="refresh" content="0;url={url}">
-</head>
-<body>
-  <p>Redirecting to <a href="{url}">{_html_escape(url)}</a></p>
-</body>
-</html>"""
-    return HTMLResponse(content=html, media_type="text/html")
-
-
-def _html_escape(s: str) -> str:
-    """Minimal HTML escape for OG meta content."""
-    return (
-        s.replace("&", "&amp;")
-         .replace("<", "&lt;")
-         .replace(">", "&gt;")
-         .replace('"', "&quot;")
-    )
-
-
-# ─── Pitch History Dashboard ──────────────────────────────────────────────────
-
-@app.get("/api/pitch-history")
-async def get_pitch_history(limit: int = 20):
-    """
-    Return all stored pitch sessions from the embedding store for the
-    history dashboard. Tier-1d: uses the new EmbeddingService
-    (pgvector in production, in-memory fallback in dev).
-    """
-    try:
-        from services.embeddings import list_all_pitches
-
-        records = await list_all_pitches(limit=limit)
-        pitches = []
-        for i, metadata in enumerate(records):
-            pitches.append({
-                "id": f"pitch-{i}",  # synthetic id; pgvector records have UUIDs
-                "session_id": metadata.get("session_id", ""),
-                "pitch_summary": metadata.get("pitch_summary", ""),
-                "strongest": metadata.get("strongest", ""),
-                "weakness": metadata.get("weakness", ""),
-                "fix": metadata.get("fix", ""),
-                "confidence_score": metadata.get("confidence_score", 0),
-                "timestamp": metadata.get("timestamp", 0),
-            })
-        return {"pitches": pitches, "total": len(pitches)}
-    except Exception as e:
-        logger.warning("pitch-history failed: %s", e)
-        return {"pitches": [], "total": 0, "error": str(e)}
-
-# ─── Phase 4: Pitch Revision Loop ─────────────────────────────────────────────
-
-
-class RevisionRequest(BaseModel):
-    session_id: str
-    provider: str = "groq"
-
-@app.post("/api/revise-pitch")
-async def revise_pitch(req: RevisionRequest):
-    """
-    Given a completed session, generate a revised pitch that directly
-    addresses the panel's criticisms. Returns original + revised pitch side-by-side.
-    """
-    session = sessions.get(req.session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    report = session.get("final_report")
-    if not report:
-        raise HTTPException(status_code=404, detail="No report found. Complete the pitch session first.")
-
-    original_pitch = session.get("pitch_summary", "")
-    verdict_parts = session.get("verdict_parts", {})
-    strengths = report.get("strengths", [])
-    risks = report.get("risks", [])
-    missing_points = report.get("missing_points", [])
-
-    revision_prompt = f"""You are an expert pitch coach and startup strategist.
-
-A founder pitched their startup to a panel of investors and received this feedback:
-
-ORIGINAL PITCH:
-{original_pitch}
-
-PANEL FEEDBACK:
-- Strongest Point: {verdict_parts.get("strongest", "Not identified")}
-- Biggest Weakness: {verdict_parts.get("weakness", "Not identified")}
-- Advised Fix: {verdict_parts.get("fix", "Not specified")}
-- Key Risks Raised: {chr(10).join(f"  • {r}" for r in risks[:5])}
-- Missing Information: {chr(10).join(f"  • {m}" for m in missing_points[:3])}
-
-YOUR TASK:
-Rewrite the pitch to directly address ALL the weaknesses above while preserving the strengths.
-The revised pitch must:
-1. Open with a stronger hook that addresses the core value proposition clearly
-2. Include specific numbers or evidence to back up any claims
-3. Explicitly address the biggest weakness the panel identified
-4. Cover the missing information gaps
-5. Be 2-4 paragraphs, crisp, and investor-ready
-
-OUTPUT: Only the revised pitch text. No preamble, no explanation."""
-
-    try:
-        revised = await llm_provider.generate_response(
-            "You are a world-class pitch coach. Rewrite the pitch to address the panel's criticisms.",
-            revision_prompt,
-            req.provider,
-            stream=False
-        )
-        revised = revised.strip()
-
-        # Store revised pitch in session for re-pitching
-        session["revised_pitch"] = revised
-
-        return {
-            "original_pitch": original_pitch,
-            "revised_pitch": revised,
-            "verdict_parts": verdict_parts,
-            "improvements_addressed": [
-                verdict_parts.get("weakness", ""),
-                verdict_parts.get("fix", ""),
-            ] + missing_points[:2]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Revision failed: {str(e)}")
-
-
-
-@app.get("/api/memory")
-async def list_memory():
-    """List all pitcher memory entries."""
-    try:
-        with open("pitcher_memory.json", "r") as f:
-            memory = json.load(f)
-        return {"pitchers": memory, "count": len(memory)}
-    except FileNotFoundError:
-        return {"pitchers": {}, "count": 0}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/api/memory/{pitcher_id}")
-async def delete_memory(pitcher_id: str):
-    """Delete a specific pitcher's memory."""
-    try:
-        with open("pitcher_memory.json", "r") as f:
-            memory = json.load(f)
-        if pitcher_id not in memory:
-            raise HTTPException(status_code=404, detail=f"No memory found for '{pitcher_id}'")
-        del memory[pitcher_id]
-        with open("pitcher_memory.json", "w") as f:
-            json.dump(memory, f, indent=2)
-        return {"status": "deleted", "pitcher_id": pitcher_id, "remaining": len(memory)}
-    except HTTPException:
-        raise
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="No memory file exists yet")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/api/memory")
-async def clear_all_memory():
-    """Clear ALL pitcher memory."""
-    try:
-        with open("pitcher_memory.json", "w") as f:
-            json.dump({}, f)
-        return {"status": "cleared"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ─── Tier-2b: Public REST API with API keys ───────────────────────
-
-
-import hashlib
-import secrets
-from datetime import datetime, timezone
-
-
-def _utcnow() -> datetime:
-    """Current UTC time. Used for API key expiry, etc."""
-    return datetime.now(timezone.utc)
 
 
 def _hash_api_key(raw_key: str) -> str:
@@ -1107,7 +792,6 @@ class PublicPitchResponse(BaseModel):
 @app.post("/api/v1/keys", response_model=CreateKeyResponse, status_code=201)
 async def create_api_key(req: CreateKeyRequest):
     """Create a new API key. The raw key is returned ONCE — store it securely."""
-    from datetime import timedelta
 
     raw, key_hash, key_prefix = _generate_api_key()
     expires_at = None
@@ -1159,7 +843,7 @@ async def revoke_api_key(key_id: str, authorization: str | None = Header(None)):
     revoked = await repo.revoke_api_key(key_id)
     if not revoked:
         raise HTTPException(status_code=404, detail="API key not found")
-    return None
+    return
 
 
 @app.get("/api/v1/pitches/{session_id}", response_model=PublicPitchResponse)

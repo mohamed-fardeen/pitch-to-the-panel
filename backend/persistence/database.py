@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -44,8 +43,8 @@ from .base import Base
 
 logger = logging.getLogger(__name__)
 
-_engine: Optional[AsyncEngine] = None
-_sessionmaker: Optional[async_sessionmaker[AsyncSession]] = None
+_engine: AsyncEngine | None = None
+_sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
 def _resolve_database_url() -> str:
@@ -65,7 +64,7 @@ def _resolve_database_url() -> str:
     return f"sqlite+aiosqlite:///{default_path}"
 
 
-def get_engine(url: Optional[str] = None) -> AsyncEngine:
+def get_engine(url: str | None = None) -> AsyncEngine:
     """Return the process-wide async engine, creating it lazily."""
     global _engine
     if _engine is None:
@@ -87,7 +86,7 @@ def get_engine(url: Optional[str] = None) -> AsyncEngine:
     return _engine
 
 
-def get_sessionmaker(url: Optional[str] = None) -> async_sessionmaker[AsyncSession]:
+def get_sessionmaker(url: str | None = None) -> async_sessionmaker[AsyncSession]:
     """Return the process-wide sessionmaker."""
     global _sessionmaker
     if _sessionmaker is None:

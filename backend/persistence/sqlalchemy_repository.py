@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,10 +26,10 @@ from .models import (
     AgentPersona,
     ApiKey,
     PitchRevision,
-    PromptExperiment,
     PitchSession,
     PitchTurn,
     PitchVerdict,
+    PromptExperiment,
     SessionStatus,
     TurnRole,
     TurnType,
@@ -42,13 +42,13 @@ logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class SqlAlchemySessionRepository(SessionRepository):
     """Production repository backed by SQLAlchemy 2.0 (async)."""
 
-    def __init__(self, sessionmaker: Optional[async_sessionmaker[AsyncSession]] = None) -> None:
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession] | None = None) -> None:
         self._sessionmaker = sessionmaker or get_sessionmaker()
         # Per-process event buses. Same lifetime caveat as the in-memory repo.
         self._events: dict[str, SessionEventBus] = {}
@@ -63,7 +63,7 @@ class SqlAlchemySessionRepository(SessionRepository):
         mode: str,
         provider: str,
         aggressiveness: int = 5,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> PitchSession:
         now = _utcnow()
         session = PitchSession(
@@ -97,10 +97,9 @@ class SqlAlchemySessionRepository(SessionRepository):
         logger.debug("Created DB session %s", session_id)
         return session
 
-    async def get_session(self, session_id: str) -> Optional[PitchSession]:
+    async def get_session(self, session_id: str) -> PitchSession | None:
         async with self._sessionmaker() as db:
-            row = await db.get(PitchSession, session_id)
-            return row
+            return await db.get(PitchSession, session_id)
 
     async def list_sessions_for_user(
         self, user_id: str, limit: int = 50
@@ -117,7 +116,7 @@ class SqlAlchemySessionRepository(SessionRepository):
 
     async def update_session(
         self, session_id: str, **fields: Any
-    ) -> Optional[PitchSession]:
+    ) -> PitchSession | None:
         async with self._sessionmaker() as db:
             session = await db.get(PitchSession, session_id)
             if session is None:
@@ -151,8 +150,8 @@ class SqlAlchemySessionRepository(SessionRepository):
         role: TurnRole | str,
         turn_type: TurnType | str,
         content: str,
-        agent_id: Optional[str] = None,
-        agent_name: Optional[str] = None,
+        agent_id: str | None = None,
+        agent_name: str | None = None,
     ) -> PitchTurn:
         role_val = role.value if isinstance(role, TurnRole) else str(role)
         type_val = turn_type.value if isinstance(turn_type, TurnType) else str(turn_type)
@@ -189,18 +188,18 @@ class SqlAlchemySessionRepository(SessionRepository):
         session_id: str,
         *,
         verdict_text: str,
-        strongest: Optional[str] = None,
-        weakness: Optional[str] = None,
-        fix: Optional[str] = None,
-        investment_score: Optional[float] = None,
-        recommendation: Optional[str] = None,
+        strongest: str | None = None,
+        weakness: str | None = None,
+        fix: str | None = None,
+        investment_score: float | None = None,
+        recommendation: str | None = None,
         confidence_score: int = 0,
         signal: VerdictSignal | str = VerdictSignal.MEDIUM,
-        charts: Optional[dict[str, Any]] = None,
+        charts: dict[str, Any] | None = None,
     ) -> PitchVerdict:
         signal_val = signal.value if isinstance(signal, VerdictSignal) else str(signal)
         async with self._sessionmaker() as db:
-            existing = await db.get(PitchVerdict, None)  # not by id, need query
+            await db.get(PitchVerdict, None)  # not by id, need query
             stmt = select(PitchVerdict).where(PitchVerdict.session_id == session_id)
             result = await db.execute(stmt)
             verdict = result.scalar_one_or_none()
@@ -237,7 +236,7 @@ class SqlAlchemySessionRepository(SessionRepository):
             await db.refresh(verdict)
             return verdict
 
-    async def get_verdict(self, session_id: str) -> Optional[PitchVerdict]:
+    async def get_verdict(self, session_id: str) -> PitchVerdict | None:
         async with self._sessionmaker() as db:
             stmt = select(PitchVerdict).where(PitchVerdict.session_id == session_id)
             result = await db.execute(stmt)
@@ -286,8 +285,8 @@ class SqlAlchemySessionRepository(SessionRepository):
         role: str,
         system_prompt: str,
         goal: str = "",
-        ocean: Optional[dict[str, float]] = None,
-        config: Optional[dict[str, Any]] = None,
+        ocean: dict[str, float] | None = None,
+        config: dict[str, Any] | None = None,
         enabled: bool = True,
     ) -> AgentPersona:
         ocean = ocean or {}
@@ -329,7 +328,7 @@ class SqlAlchemySessionRepository(SessionRepository):
             await db.refresh(persona)
             return persona
 
-    async def get_persona(self, persona_id: str) -> Optional[AgentPersona]:
+    async def get_persona(self, persona_id: str) -> AgentPersona | None:
         async with self._sessionmaker() as db:
             return await db.get(AgentPersona, persona_id)
 
@@ -346,14 +345,14 @@ class SqlAlchemySessionRepository(SessionRepository):
     async def upsert_user(
         self,
         *,
-        email: Optional[str] = None,
-        name: Optional[str] = None,
-        image_url: Optional[str] = None,
+        email: str | None = None,
+        name: str | None = None,
+        image_url: str | None = None,
         provider: str = "email",
-        provider_account_id: Optional[str] = None,
+        provider_account_id: str | None = None,
     ) -> User:
         async with self._sessionmaker() as db:
-            user: Optional[User] = None
+            user: User | None = None
             if provider_account_id:
                 stmt = select(User).where(
                     User.provider == provider,
@@ -385,13 +384,13 @@ class SqlAlchemySessionRepository(SessionRepository):
             await db.refresh(user)
             return user
 
-    async def get_user(self, user_id: str) -> Optional[User]:
+    async def get_user(self, user_id: str) -> User | None:
         async with self._sessionmaker() as db:
             return await db.get(User, user_id)
 
     async def get_user_by_provider(
         self, provider: str, provider_account_id: str
-    ) -> Optional[User]:
+    ) -> User | None:
         async with self._sessionmaker() as db:
             stmt = select(User).where(
                 User.provider == provider,
@@ -415,10 +414,10 @@ class SqlAlchemySessionRepository(SessionRepository):
         name: str,
         key_hash: str,
         key_prefix: str,
-        user_id: Optional[str] = None,
-        scopes: Optional[list[str]] = None,
-        expires_at: Optional[Any] = None,
-        rate_limit_per_minute: Optional[int] = None,
+        user_id: str | None = None,
+        scopes: list[str] | None = None,
+        expires_at: Any | None = None,
+        rate_limit_per_minute: int | None = None,
     ) -> ApiKey:
         from .models import ApiKey
         key = ApiKey(
@@ -436,8 +435,8 @@ class SqlAlchemySessionRepository(SessionRepository):
             await session.refresh(key)
         return key
 
-    async def get_api_key_by_hash(self, key_hash: str) -> Optional[ApiKey]:
-        from datetime import datetime, timezone
+    async def get_api_key_by_hash(self, key_hash: str) -> ApiKey | None:
+        from datetime import datetime
         async with self._sessionmaker() as session:
             from sqlalchemy import select
             stmt = select(ApiKey).where(ApiKey.key_hash == key_hash)
@@ -447,12 +446,11 @@ class SqlAlchemySessionRepository(SessionRepository):
                 return None
             if not key.is_active or key.revoked_at is not None:
                 return None
-            if key.expires_at is not None:
-                if datetime.now(timezone.utc) > key.expires_at:
-                    return None
+            if key.expires_at is not None and datetime.now(UTC) > key.expires_at:
+                return None
             return key
 
-    async def list_api_keys(self, user_id: Optional[str] = None) -> list[ApiKey]:
+    async def list_api_keys(self, user_id: str | None = None) -> list[ApiKey]:
         from sqlalchemy import select
         async with self._sessionmaker() as session:
             stmt = select(ApiKey).order_by(ApiKey.created_at.desc())
@@ -462,18 +460,19 @@ class SqlAlchemySessionRepository(SessionRepository):
             return list(result.scalars().all())
 
     async def revoke_api_key(self, key_id: str) -> bool:
-        from datetime import datetime, timezone
+        from datetime import datetime
         async with self._sessionmaker() as session:
             key = await session.get(ApiKey, key_id)
             if key is None:
                 return False
             key.is_active = False
-            key.revoked_at = datetime.now(timezone.utc)
+            key.revoked_at = datetime.now(UTC)
             await session.commit()
             return True
 
     async def record_api_key_usage(self, key_id: str) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from sqlalchemy import update
         async with self._sessionmaker() as session:
             await session.execute(
@@ -481,7 +480,7 @@ class SqlAlchemySessionRepository(SessionRepository):
                 .where(ApiKey.id == key_id)
                 .values(
                     total_requests=ApiKey.total_requests + 1,
-                    last_used_at=datetime.now(timezone.utc),
+                    last_used_at=datetime.now(UTC),
                 )
             )
             await session.commit()
@@ -489,8 +488,8 @@ class SqlAlchemySessionRepository(SessionRepository):
     # ─── Prompt Experiments (Tier-2c) ───────────────────────────
 
     async def create_prompt_experiment(
-        self, experiment: "PromptExperiment"
-    ) -> "PromptExperiment":
+        self, experiment: PromptExperiment
+    ) -> PromptExperiment:
         async with self._sessionmaker() as session:
             session.add(experiment)
             await session.commit()
@@ -499,7 +498,7 @@ class SqlAlchemySessionRepository(SessionRepository):
 
     async def get_prompt_experiment_by_name(
         self, name: str
-    ) -> Optional["PromptExperiment"]:
+    ) -> PromptExperiment | None:
         from sqlalchemy import select
         async with self._sessionmaker() as session:
             stmt = select(PromptExperiment).where(PromptExperiment.name == name)
@@ -507,9 +506,9 @@ class SqlAlchemySessionRepository(SessionRepository):
             return result.scalar_one_or_none()
 
     async def update_prompt_experiment(
-        self, experiment: "PromptExperiment"
-    ) -> "PromptExperiment":
-        from datetime import datetime, timezone
+        self, experiment: PromptExperiment
+    ) -> PromptExperiment:
+        from datetime import datetime
         async with self._sessionmaker() as session:
             existing = await session.get(PromptExperiment, experiment.id)
             if existing is None:
@@ -519,7 +518,7 @@ class SqlAlchemySessionRepository(SessionRepository):
                 existing.is_active = experiment.is_active
                 existing.variant_weights = dict(experiment.variant_weights)
                 existing.meta = dict(experiment.meta)
-                existing.updated_at = datetime.now(timezone.utc)
+                existing.updated_at = datetime.now(UTC)
                 experiment = existing
             await session.commit()
             await session.refresh(experiment)

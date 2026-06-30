@@ -22,7 +22,6 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Optional
 
 import yaml
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class ExperimentComparison:
     experiment: str
     metric: str
     variants: list[VariantComparison]
-    winner: Optional[str] = None
+    winner: str | None = None
     """If one variant's mean is significantly different, this is its name."""
 
 
@@ -244,7 +244,7 @@ class _Router:
 
     async def compare(
         self, experiment_name: str, metric_name: str
-    ) -> Optional[ExperimentComparison]:
+    ) -> ExperimentComparison | None:
         """Compare variants on a given metric. Returns None if no data."""
         from persistence import get_repository
         repo = get_repository()

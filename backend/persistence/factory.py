@@ -15,7 +15,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import Optional
 
 from .in_memory import InMemorySessionRepository
 from .repository import SessionRepository
@@ -24,7 +23,7 @@ from .sqlalchemy_repository import SqlAlchemySessionRepository
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
-_default_repo: Optional[SessionRepository] = None
+_default_repo: SessionRepository | None = None
 
 
 def get_repository() -> SessionRepository:
@@ -64,12 +63,11 @@ def _build_repository() -> SessionRepository:
 
     # Default: SQLAlchemy
     logger.info("Using SqlAlchemySessionRepository (DATABASE_URL=%s)", _redact(os.getenv("DATABASE_URL", "")))
-    repo = SqlAlchemySessionRepository()
+    return SqlAlchemySessionRepository()
 
     # Run schema creation in a background-friendly way. The async function
     # is awaited by the FastAPI lifespan handler (not here) — we just import
     # it lazily to avoid spinning up a loop on module load.
-    return repo
 
 
 async def init_repository_schema() -> None:

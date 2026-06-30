@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Optional
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .models import ApiKey, PromptExperiment
@@ -92,12 +92,12 @@ class SessionRepository(ABC):
         mode: str,
         provider: str,
         aggressiveness: int = 5,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> PitchSession:
         """Create a new pitch session and return the row."""
 
     @abstractmethod
-    async def get_session(self, session_id: str) -> Optional[PitchSession]:
+    async def get_session(self, session_id: str) -> PitchSession | None:
         """Fetch a session by id, or None if not found."""
 
     @abstractmethod
@@ -109,7 +109,7 @@ class SessionRepository(ABC):
     @abstractmethod
     async def update_session(
         self, session_id: str, **fields: Any
-    ) -> Optional[PitchSession]:
+    ) -> PitchSession | None:
         """Update arbitrary fields on a session. Returns the updated row."""
 
     @abstractmethod
@@ -127,8 +127,8 @@ class SessionRepository(ABC):
         role: TurnRole | str,
         turn_type: TurnType | str,
         content: str,
-        agent_id: Optional[str] = None,
-        agent_name: Optional[str] = None,
+        agent_id: str | None = None,
+        agent_name: str | None = None,
     ) -> PitchTurn:
         """Append a turn to a session's conversation log."""
 
@@ -144,19 +144,19 @@ class SessionRepository(ABC):
         session_id: str,
         *,
         verdict_text: str,
-        strongest: Optional[str] = None,
-        weakness: Optional[str] = None,
-        fix: Optional[str] = None,
-        investment_score: Optional[float] = None,
-        recommendation: Optional[str] = None,
+        strongest: str | None = None,
+        weakness: str | None = None,
+        fix: str | None = None,
+        investment_score: float | None = None,
+        recommendation: str | None = None,
         confidence_score: int = 0,
         signal: VerdictSignal | str = VerdictSignal.MEDIUM,
-        charts: Optional[dict[str, Any]] = None,
+        charts: dict[str, Any] | None = None,
     ) -> PitchVerdict:
         """Upsert the verdict for a session. Each session has at most one."""
 
     @abstractmethod
-    async def get_verdict(self, session_id: str) -> Optional[PitchVerdict]:
+    async def get_verdict(self, session_id: str) -> PitchVerdict | None:
         """Fetch the verdict for a session, or None if not yet rendered."""
 
     # ─── Revisions ────────────────────────────────────────────────
@@ -187,14 +187,14 @@ class SessionRepository(ABC):
         role: str,
         system_prompt: str,
         goal: str = "",
-        ocean: Optional[dict[str, float]] = None,
-        config: Optional[dict[str, Any]] = None,
+        ocean: dict[str, float] | None = None,
+        config: dict[str, Any] | None = None,
         enabled: bool = True,
     ) -> AgentPersona:
         """Insert or update a persona in the global catalog."""
 
     @abstractmethod
-    async def get_persona(self, persona_id: str) -> Optional[AgentPersona]:
+    async def get_persona(self, persona_id: str) -> AgentPersona | None:
         """Fetch a persona by id."""
 
     @abstractmethod
@@ -207,22 +207,22 @@ class SessionRepository(ABC):
     async def upsert_user(
         self,
         *,
-        email: Optional[str] = None,
-        name: Optional[str] = None,
-        image_url: Optional[str] = None,
+        email: str | None = None,
+        name: str | None = None,
+        image_url: str | None = None,
         provider: str = "email",
-        provider_account_id: Optional[str] = None,
+        provider_account_id: str | None = None,
     ) -> User:
         """Insert or update a user. Returns the user row."""
 
     @abstractmethod
-    async def get_user(self, user_id: str) -> Optional[User]:
+    async def get_user(self, user_id: str) -> User | None:
         """Fetch a user by id."""
 
     @abstractmethod
     async def get_user_by_provider(
         self, provider: str, provider_account_id: str
-    ) -> Optional[User]:
+    ) -> User | None:
         """Look up a user by their OAuth provider account id."""
 
     # ─── Events (process-local) ──────────────────────────────────
@@ -240,19 +240,19 @@ class SessionRepository(ABC):
         name: str,
         key_hash: str,
         key_prefix: str,
-        user_id: Optional[str] = None,
-        scopes: Optional[list[str]] = None,
-        expires_at: Optional[Any] = None,
-        rate_limit_per_minute: Optional[int] = None,
-    ) -> "ApiKey":
+        user_id: str | None = None,
+        scopes: list[str] | None = None,
+        expires_at: Any | None = None,
+        rate_limit_per_minute: int | None = None,
+    ) -> ApiKey:
         """Create a new API key. Returns the row."""
 
     @abstractmethod
-    async def get_api_key_by_hash(self, key_hash: str) -> Optional["ApiKey"]:
+    async def get_api_key_by_hash(self, key_hash: str) -> ApiKey | None:
         """Look up an API key by its hash. Returns None if not found or revoked."""
 
     @abstractmethod
-    async def list_api_keys(self, user_id: Optional[str] = None) -> list["ApiKey"]:
+    async def list_api_keys(self, user_id: str | None = None) -> list[ApiKey]:
         """List API keys. If user_id is set, filter to that user."""
 
     @abstractmethod
@@ -267,20 +267,20 @@ class SessionRepository(ABC):
 
     @abstractmethod
     async def create_prompt_experiment(
-        self, experiment: "PromptExperiment"
-    ) -> "PromptExperiment":
+        self, experiment: PromptExperiment
+    ) -> PromptExperiment:
         """Insert a new prompt experiment."""
 
     @abstractmethod
     async def get_prompt_experiment_by_name(
         self, name: str
-    ) -> Optional["PromptExperiment"]:
+    ) -> PromptExperiment | None:
         """Look up an experiment by name."""
 
     @abstractmethod
     async def update_prompt_experiment(
-        self, experiment: "PromptExperiment"
-    ) -> "PromptExperiment":
+        self, experiment: PromptExperiment
+    ) -> PromptExperiment:
         """Update an existing prompt experiment."""
 
     @abstractmethod
@@ -308,7 +308,7 @@ class SessionRepository(ABC):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 __all__ = [

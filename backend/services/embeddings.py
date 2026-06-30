@@ -23,6 +23,7 @@ is the real production store.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -30,7 +31,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -56,7 +57,7 @@ def _is_postgres() -> bool:
 # ─── Embedding API ────────────────────────────────────────────────
 
 
-def _embed_jina(text: str) -> Optional[list[float]]:
+def _embed_jina(text: str) -> list[float] | None:
     """Call Jina Embeddings API synchronously. Returns None on failure."""
     if not JINA_API_KEY:
         return None
@@ -80,7 +81,7 @@ def _embed_jina(text: str) -> Optional[list[float]]:
         return None
 
 
-async def _embed_async(text: str) -> Optional[list[float]]:
+async def _embed_async(text: str) -> list[float] | None:
     """Async wrapper around the Jina embedding call."""
     return await asyncio.to_thread(_embed_jina, text)
 
@@ -106,7 +107,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     """Cosine similarity between two vectors. Returns 0..1."""
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
     if norm_a == 0 or norm_b == 0:
@@ -152,7 +153,7 @@ async def _ensure_pgvector_table() -> bool:
             ))
             # Create an IVFFlat index for cosine similarity (lists=100 is a
             # common default for datasets under 1M rows)
-            try:
+            with contextlib.suppress(Exception):
                 await conn.execute(text(
                     """
                     CREATE INDEX IF NOT EXISTS pitch_embeddings_embedding_idx
@@ -160,9 +161,6 @@ async def _ensure_pgvector_table() -> bool:
                     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)
                     """
                 ))
-            except Exception:
-                # Index creation can fail on small tables; that's OK
-                pass
         _pgvector_initialized = True
         _pgvector_collection = "pgvector"  # marker
         logger.info("pgvector extension + pitch_embeddings table ready.")

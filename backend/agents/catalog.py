@@ -18,7 +18,7 @@ because:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -41,7 +41,7 @@ class OceanProfile:
         }
 
     @classmethod
-    def from_dict(cls, data: Optional[dict[str, Any]]) -> "OceanProfile":
+    def from_dict(cls, data: dict[str, Any] | None) -> OceanProfile:
         if data is None:
             return cls()
         return cls(
@@ -106,7 +106,7 @@ class PersonaCatalog:
         # Build an index for O(1) lookup by id
         self._by_id: dict[str, Persona] = {p.id: p for p in self.personas}
 
-    def get(self, persona_id: str) -> Optional[Persona]:
+    def get(self, persona_id: str) -> Persona | None:
         return self._by_id.get(persona_id)
 
     def __contains__(self, persona_id: str) -> bool:

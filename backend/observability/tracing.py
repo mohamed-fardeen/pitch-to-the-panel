@@ -26,8 +26,9 @@ import logging
 import os
 import time
 import uuid
-from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +100,10 @@ class _NoOpTrace:
     def end(self) -> None:
         pass
 
-    def span(self, *_args: Any, **_kwargs: Any) -> "_NoOpTrace":
+    def span(self, *_args: Any, **_kwargs: Any) -> _NoOpTrace:
         return self
 
-    def __enter__(self) -> "_NoOpTrace":
+    def __enter__(self) -> _NoOpTrace:
         return self
 
     def __exit__(self, *_args: Any) -> None:
@@ -124,7 +125,7 @@ class _LangfuseTrace:
         except Exception as e:
             logger.debug("Langfuse update failed: %s", e)
 
-    def span(self, name: str, **kwargs: Any) -> "_LangfuseTrace":
+    def span(self, name: str, **kwargs: Any) -> _LangfuseTrace:
         try:
             span = self._trace.span(name=name, **kwargs)
             self._spans.append(span)
@@ -141,7 +142,7 @@ class _LangfuseTrace:
         except Exception as e:
             logger.debug("Langfuse end failed: %s", e)
 
-    def __enter__(self) -> "_LangfuseTrace":
+    def __enter__(self) -> _LangfuseTrace:
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -162,10 +163,10 @@ def trace_llm_call(
     *,
     provider: str = "",
     model: str = "",
-    session_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    metadata: Optional[dict[str, Any]] = None,
-    input_data: Optional[Any] = None,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    input_data: Any | None = None,
 ) -> Iterator[Any]:
     """
     Context manager that traces an LLM call.
@@ -222,20 +223,16 @@ def trace_llm_call(
         except Exception as exc_val:
             exc_info = (type(exc_val), exc_val, exc_val.__traceback__)
             # Mark the trace as errored
-            try:
+            with suppress(Exception):
                 trace_handle.update(
                     status="error",
                     error=f"{exc_info[0].__name__}: {exc_info[1]}",
                 )
-            except Exception:
-                pass
             raise
     finally:
         # Always call .end() to record latency, even on the success path.
-        try:
+        with suppress(Exception):
             trace_handle.end()
-        except Exception:
-            pass
 
 
 def _capture_exc() -> tuple:

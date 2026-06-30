@@ -12,16 +12,16 @@ The orchestrator code does NOT call these directly — they're
 wrapped inside the LLMProvider and FastAPI lifespan respectively.
 """
 
-from .tracing import (
-    trace_llm_call,
-    is_tracing_enabled,
-    flush_traces,
-)
 from .sentry import (
-    is_sentry_enabled,
-    init_sentry,
     capture_exception,
     capture_message,
+    init_sentry,
+    is_sentry_enabled,
+)
+from .tracing import (
+    flush_traces,
+    is_tracing_enabled,
+    trace_llm_call,
 )
 
 __all__ = [

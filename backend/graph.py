@@ -1,6 +1,8 @@
-from typing import TypedDict, Annotated, List, Optional
 import operator
-from langgraph.graph import StateGraph, END
+from typing import Annotated, TypedDict
+
+from langgraph.graph import END, StateGraph
+
 
 class FocusGroupState(TypedDict):
     # Core session data
@@ -9,35 +11,35 @@ class FocusGroupState(TypedDict):
     domain: dict
     mode: str  # "spark" | "venture" | "reality"
     provider: str
-    
+
     # NEW Agentic Architecture Fields
     action: str  # Decided by controller
     action_input: dict
-    action_history: Annotated[List[str], operator.add]
+    action_history: Annotated[list[str], operator.add]
     step_count: int
     max_steps: int
     last_reflection_step: int
     last_persona_used: str
-    
+
     # User Interaction
     input_type: str  # "confirmation | pitcher_response | interrupt" # FIXED: Standardized
     awaiting_user_input: bool
     pitcher_interrupt: bool
     pitcher_message: str
     is_speaking: bool  # Speech synchronization lock
-    
+
     # Pitch Refinement
     refined_pitch: str
     awaiting_pitch_confirmation: bool
-    
+
     # Memory and Reflection
     memory: dict  # { "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [], "covered_topics": [] }
     agent_memory: dict # { agent_id: { "claims": [], "risks": [], "strengths": [], "contradictions": [], "opinions": [] } }
     reflection: dict  # { "missing": [], "confidence": float, "should_continue": bool, "next_priority": str }
-    memory_history: Annotated[List[dict], operator.add]
-    
+    memory_history: Annotated[list[dict], operator.add]
+
     # Conversation history
-    conversation: Annotated[List[dict], operator.add]
+    conversation: Annotated[list[dict], operator.add]
 
 def build_agentic_graph(
     pitch_refiner_node,
@@ -54,7 +56,7 @@ def build_agentic_graph(
     Build the Controller-driven agentic loop for the Pitch to the Panel system.
     """
     workflow = StateGraph(FocusGroupState)
-    
+
     # Add Nodes
     workflow.add_node("pitch_refiner", pitch_refiner_node)
     workflow.add_node("controller", controller_node)
@@ -65,10 +67,10 @@ def build_agentic_graph(
     workflow.add_node("final", final_node)
     workflow.add_node("memory_update", memory_update_node)
     workflow.add_node("handle_interrupt", handle_interrupt_node)
-    
+
     # Entry Point: Pitch refinement always comes first
     workflow.set_entry_point("pitch_refiner")
-    
+
     # Pitch Refinement Loop
     workflow.add_conditional_edges(
         "pitch_refiner",
@@ -78,7 +80,7 @@ def build_agentic_graph(
             "continue": "controller"
         }
     )
-    
+
     # Controller uses the router to decide the next step
     workflow.add_conditional_edges(
         "controller",
@@ -93,22 +95,22 @@ def build_agentic_graph(
             "handle_interrupt": "handle_interrupt"
         }
     )
-    
+
     # Interrupt handling
     workflow.add_edge("handle_interrupt", "pitcher")
-    
+
     # Centralized Memory Update before returning to controller
     workflow.add_edge("persona", "memory_update")
     workflow.add_edge("tool", "memory_update")
     workflow.add_edge("memory_update", "controller")
-    
+
     # These stay direct or handle their own logic
     workflow.add_edge("pitcher", "memory_update")
     workflow.add_edge("reflection", "controller")
-    
+
     # End node
     workflow.add_edge("final", END)
-    
+
     return workflow.compile()
 
 def action_router(state):
